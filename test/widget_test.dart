@@ -9,10 +9,11 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: HrmErgApp()));
 
     expect(find.text('Device Setup'), findsOneWidget);
-    expect(find.text('Heart Rate Monitor'), findsOneWidget);
+    expect(find.text('HRM'), findsOneWidget);
     expect(find.text('Wattbike Trainer'), findsOneWidget);
     expect(find.text('Starting Watts'), findsOneWidget);
     expect(find.text('Target Heart Rate'), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
+    expect(find.text('DISCONNECTED'), findsNWidgets(2));
   });
 }
