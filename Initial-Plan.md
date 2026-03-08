@@ -6,18 +6,18 @@
 - [ ] Defer non-MVP features (charts, long-term analytics, advanced alerts) until MVP acceptance criteria are met.
 
 ## Prerequisites (Do First)
-- [ ] Install Flutter SDK (stable) to a user-writable path (example: `C:\Users\melpc\tools\flutter`) and add `...\flutter\bin` to user `PATH`.
-- [ ] Install Android Studio (stable) with Android SDK Platform 34, Build-Tools, Command-line Tools, Platform-Tools, and Emulator.
-- [ ] Set `ANDROID_SDK_ROOT` (default: `C:\Users\melpc\AppData\Local\Android\Sdk`) and ensure `adb` resolves on `PATH`.
-- [ ] Install VS Code extensions: `Flutter` and `Dart` (optional: `Error Lens`).
-- [ ] Keep Java 11 available (already present) unless `flutter doctor` requires a different toolchain.
-- [ ] Run `flutter doctor -v` and clear all Android toolchain blockers.
-- [ ] Enable Developer Options + USB debugging on the Android phone and verify via `adb devices`.
-- [ ] Confirm both BLE devices are available and discoverable for testing (HR monitor + Wattbike Atom).
+- [x] Install Flutter SDK (stable) to a user-writable path (installed at `C:\Users\melpc\tools\flutter_windows_3.41.4-stable\flutter`) and add its `bin` to user `PATH`.
+- [x] Install Android Studio (stable) with Android SDK Platform 34, Build-Tools, Command-line Tools, Platform-Tools, and Emulator.
+- [x] Set `ANDROID_SDK_ROOT` (set to `C:\Users\melpc\AppData\Local\Android\sdk`) and ensure `adb` resolves on `PATH`.
+- [x] Install VS Code extensions: `Flutter` and `Dart` (optional: `Error Lens`).
+- [x] Keep Java 11 available (already present) unless `flutter doctor` requires a different toolchain.
+- [x] Run `flutter doctor -v` and clear Android toolchain blockers for Android development (non-Android warnings can be ignored).
+- [x] Enable Developer Options + USB debugging on the Android phone and verify device connection (`flutter doctor` detects `M2102J20SG`).
+- [x] Confirm both BLE devices are available and discoverable for testing (HR monitor + Wattbike Atom).
 
 ## Implementation Changes (MVP, Decision-Complete)
-- [ ] Create a new Flutter app scaffold in this repo and commit a clean baseline.
-- [ ] Add dependencies: `flutter_blue_plus`, `flutter_riverpod`, `equatable`, `collection`, `intl`.
+- [x] Create a new Flutter app scaffold in this repo and commit a clean baseline.
+- [x] Add dependencies: `flutter_blue_plus`, `flutter_riverpod`, `equatable`, `collection`, `intl`.
 - [ ] Define core contracts and models.
 - [ ] Add `HrSample { bpm, timestamp }`, `PowerCommand { watts, timestamp, reason }`, `ControlConfig { targetHr, minPower=50, maxPower=500, loopSeconds=20, avgWindowSeconds=60 }`.
 - [ ] Add `HrMonitorRepository` interface for HR stream + reconnect handling.
@@ -54,3 +54,9 @@
 - [ ] Hardware is available now for immediate real-device BLE validation.
 - [ ] Riverpod is the default state management approach.
 - [ ] Timing and adjustment table values are fixed for MVP unless safety validation requires change.
+
+
+
+
+
+
