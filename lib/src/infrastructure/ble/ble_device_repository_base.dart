@@ -128,6 +128,8 @@ abstract class BleDeviceRepositoryBase {
 
   DeviceSelectionStore get selectionStore => _store;
 
+  BluetoothDevice? get connectedDevice => _device;
+
   void _emitStatus(ConnectionStatus status) {
     _status = status;
     if (!_connectionController.isClosed) {

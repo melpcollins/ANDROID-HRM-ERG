@@ -21,13 +21,38 @@ class HrmErgApp extends StatelessWidget {
   }
 }
 
-class DeviceSetupScreen extends ConsumerWidget {
+class DeviceSetupScreen extends ConsumerStatefulWidget {
   const DeviceSetupScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(connectSetupControllerProvider);
-    final controller = ref.read(connectSetupControllerProvider.notifier);
+  ConsumerState<DeviceSetupScreen> createState() => _DeviceSetupScreenState();
+}
+
+class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
+  late final TextEditingController _startingWattsController;
+  late final TextEditingController _targetHrController;
+
+  @override
+  void initState() {
+    super.initState();
+    _startingWattsController = TextEditingController(text: '100');
+    _targetHrController = TextEditingController(text: '100');
+  }
+
+  @override
+  void dispose() {
+    _startingWattsController.dispose();
+    _targetHrController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final connectState = ref.watch(connectSetupControllerProvider);
+    final connectController = ref.read(connectSetupControllerProvider.notifier);
+
+    final sessionState = ref.watch(ergSessionControllerProvider);
+    final sessionController = ref.read(ergSessionControllerProvider.notifier);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Device Setup')),
@@ -36,27 +61,147 @@ class DeviceSetupScreen extends ConsumerWidget {
         children: [
           _DeviceSection(
             title: 'Heart Rate Monitor',
-            status: state.hrStatus,
-            selectedDeviceId: state.selectedHrId,
-            devices: state.hrDevices,
-            isScanning: state.scanningHr,
-            error: state.hrError,
-            onScan: controller.scanHrMonitors,
-            onReconnectSaved: controller.reconnectHrMonitor,
-            onConnect: controller.connectHrMonitor,
+            status: connectState.hrStatus,
+            selectedDeviceId: connectState.selectedHrId,
+            devices: connectState.hrDevices,
+            isScanning: connectState.scanningHr,
+            error: connectState.hrError,
+            onScan: connectController.scanHrMonitors,
+            onReconnectSaved: connectController.reconnectHrMonitor,
+            onConnect: connectController.connectHrMonitor,
           ),
           const SizedBox(height: 16),
           _DeviceSection(
             title: 'Wattbike Trainer',
-            status: state.trainerStatus,
-            selectedDeviceId: state.selectedTrainerId,
-            devices: state.trainerDevices,
-            isScanning: state.scanningTrainer,
-            error: state.trainerError,
-            onScan: controller.scanTrainers,
-            onReconnectSaved: controller.reconnectTrainer,
-            onConnect: controller.connectTrainer,
+            status: connectState.trainerStatus,
+            selectedDeviceId: connectState.selectedTrainerId,
+            devices: connectState.trainerDevices,
+            isScanning: connectState.scanningTrainer,
+            error: connectState.trainerError,
+            onScan: connectController.scanTrainers,
+            onReconnectSaved: connectController.reconnectTrainer,
+            onConnect: connectController.connectTrainer,
           ),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'ERG Control',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _startingWattsController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Starting Watts',
+                      hintText: 'e.g. 150',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _targetHrController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Target Heart Rate',
+                      hintText: 'e.g. 135',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      FilledButton(
+                        onPressed: () async {
+                          final startingWatts = int.tryParse(
+                            _startingWattsController.text.trim(),
+                          );
+                          final targetHr = int.tryParse(
+                            _targetHrController.text.trim(),
+                          );
+
+                          if (startingWatts == null || targetHr == null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Please enter valid integers for watts and target HR.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          await sessionController.startSession(
+                            startingWatts: startingWatts,
+                            targetHr: targetHr,
+                          );
+                        },
+                        child: const Text('Start'),
+                      ),
+                      OutlinedButton(
+                        onPressed: sessionState.isRunning
+                            ? sessionController.stopSession
+                            : null,
+                        child: const Text('Stop'),
+                      ),
+                    ],
+                  ),
+                  if (sessionState.error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      sessionState.error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (sessionState.isRunning)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Live Session (1-min averages)',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    _MetricRow(
+                      label: 'Heart Rate (avg 60s)',
+                      value: sessionState.averageHr == null
+                          ? '--'
+                          : '${sessionState.averageHr!.toStringAsFixed(1)} bpm',
+                    ),
+                    _MetricRow(
+                      label: 'Current Power (avg 60s)',
+                      value: sessionState.averagePower == null
+                          ? '--'
+                          : '${sessionState.averagePower!.toStringAsFixed(1)} W',
+                    ),
+                    _MetricRow(
+                      label: 'Target HR',
+                      value: '${sessionState.targetHr ?? '--'} bpm',
+                    ),
+                    _MetricRow(
+                      label: 'Latest Power Command',
+                      value: '${sessionState.currentPower ?? '--'} W',
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -170,3 +315,24 @@ class _DeviceSection extends StatelessWidget {
     }
   }
 }
+
+class _MetricRow extends StatelessWidget {
+  const _MetricRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+

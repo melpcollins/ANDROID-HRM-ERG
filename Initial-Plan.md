@@ -23,14 +23,14 @@
 - [x] Add `HrMonitorRepository` interface for HR stream + reconnect handling.
 - [x] Add `TrainerRepository` interface for FTMS connection + `setTargetPower(int watts)`.
 - [x] Implement BLE scan/select/connect flow for both device roles and persist selected device IDs for reconnect.
-- [ ] Implement HR pipeline: ingest 1 Hz HR samples, maintain rolling 60-second average, and handle sample gaps.
-- [ ] Implement control engine logic.
-- [ ] Compute `delta = hrAvg - targetHr`.
-- [ ] Map delta to W/min (`+1/-3`, `+2/-6`, `>=+3/-10`, `-1/+3`, `-2/+6`, `<=-3/+10`).
-- [ ] Convert to per-loop (`adjLoop = adjPerMin / 3`), round to whole watts, and clamp to 50-500 W.
+- [x] Implement HR pipeline: ingest HR notification samples from BLE and maintain rolling 60-second average.
+- [x] Implement control engine logic (Start button triggers automatic 20-second adjustment loop).
+- [x] Compute `delta = hrAvg - targetHr`.
+- [x] Map delta to W/min (`+1/-3`, `+2/-6`, `>=+3/-10`, `-1/+3`, `-2/+6`, `<=-3/+10`).
+- [x] Convert to per-loop (`adjLoop = adjPerMin / 3`), round to whole watts, and clamp to 50-500 W.
 - [ ] Execute control tick every 20 seconds only when trainer is connected and HR freshness is <= 5 seconds.
 - [ ] Add safety behavior: pause control on stale HR/disconnect, manual stop, explicit pause reason in UI.
-- [ ] Build MVP UI.
+- [x] Build MVP UI for setup + Start controls + live 1-minute average display.
 - [ ] Create connect screen with scan/select/connect states for HR monitor and Wattbike.
 - [ ] Create ride screen with current HR, 60s average HR, target HR control, current power command, loop countdown, and status banners.
 - [ ] Add per-session CSV logging (`timestamp, hr, hr_avg, target_hr, delta, power_cmd, status`) to app documents storage.
@@ -54,6 +54,7 @@
 - [ ] Hardware is available now for immediate real-device BLE validation.
 - [ ] Riverpod is the default state management approach.
 - [ ] Timing and adjustment table values are fixed for MVP unless safety validation requires change.
+
 
 
 
