@@ -240,7 +240,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                     ),
                     const SizedBox(height: 12),
                     _MetricRow(
-                      label: 'Heart Rate (avg 60s)',
+                      label: 'Heart Rate (avg 10s)',
                       value: sessionState.averageHr == null
                           ? '--'
                           : '${sessionState.averageHr!.toStringAsFixed(1)} bpm',
@@ -252,6 +252,12 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                     _MetricRow(
                       label: 'Power',
                       value: '${sessionState.currentPower ?? '--'} W',
+                    ),
+                    _MetricRow(
+                      label: 'Drift',
+                      value: sessionState.driftWatts == null
+                          ? '--'
+                          : '${sessionState.driftWatts!.toStringAsFixed(1)} W',
                     ),
                   ],
                 ),

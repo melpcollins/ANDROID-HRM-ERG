@@ -26,8 +26,11 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
   StreamSubscription<int>? _powerSubscription;
   Timer? _controlTimer;
   Duration _loopInterval = const Duration(seconds: 10);
+  double _maxOneMinuteAveragePower = 0;
 
-  static const Duration _avgWindow = Duration(seconds: 60);
+  static const Duration _hrAvgWindow = Duration(seconds: 10);
+  static const Duration _powerAvgWindow = Duration(seconds: 60);
+  static const Duration _sampleRetentionWindow = Duration(seconds: 60);
 
   void initialize() {
     _hrSubscription ??= _hrMonitorRepository.hrSamples.listen((sample) {
@@ -36,17 +39,18 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
 
       state = state.copyWith(
         currentHr: sample.bpm,
-        averageHr: _calculateHrAverage(),
+        averageHr: _calculateHrAverage(window: _hrAvgWindow),
       );
     });
 
     _powerSubscription ??= _trainerRepository.currentPower.listen((watts) {
       _powerSamples.add(_PowerSample(watts: watts, timestamp: DateTime.now()));
       _trimOldSamples();
+      _updatePowerDriftStats();
 
       state = state.copyWith(
         currentPower: watts,
-        averagePower: _calculatePowerAverage(),
+        averagePower: _calculatePowerAverage(window: _powerAvgWindow),
       );
     });
   }
@@ -57,6 +61,9 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
     required int loopSeconds,
   }) async {
     _loopInterval = Duration(seconds: loopSeconds);
+    _maxOneMinuteAveragePower = 0;
+    _hrSamples.clear();
+    _powerSamples.clear();
 
     state = state.copyWith(
       isRunning: true,
@@ -64,6 +71,9 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
       targetHr: targetHr,
       loopSeconds: loopSeconds,
       currentPower: startingWatts,
+      driftWatts: 0,
+      averagePower: null,
+      averageHr: null,
       clearError: true,
     );
 
@@ -84,7 +94,7 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
       return;
     }
 
-    final avgHr = _calculateHrAverage();
+    final avgHr = _calculateHrAverage(window: _hrAvgWindow);
     final currentPower = state.currentPower ?? state.startingWatts ?? 0;
 
     if (avgHr == null) {
@@ -106,7 +116,7 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
       state = state.copyWith(
         currentPower: nextPower,
         averageHr: avgHr,
-        averagePower: _calculatePowerAverage(),
+        averagePower: _calculatePowerAverage(window: _powerAvgWindow),
         lastAdjustmentWatts: adjustPerLoop,
         clearError: true,
       );
@@ -137,27 +147,65 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
     return 0;
   }
 
-  double? _calculateHrAverage() {
-    if (_hrSamples.isEmpty) {
+  double? _calculateHrAverage({required Duration window}) {
+    final relevantSamples = _samplesWithinWindow(window);
+    if (relevantSamples.isEmpty) {
       return null;
     }
-    final total = _hrSamples.fold<int>(0, (sum, sample) => sum + sample.bpm);
-    return total / _hrSamples.length;
+
+    final total = relevantSamples.fold<int>(
+      0,
+      (sum, sample) => sum + sample.bpm,
+    );
+    return total / relevantSamples.length;
   }
 
-  double? _calculatePowerAverage() {
-    if (_powerSamples.isEmpty) {
+  double? _calculatePowerAverage({required Duration window}) {
+    final relevantSamples = _powerSamplesWithinWindow(window);
+    if (relevantSamples.isEmpty) {
       return null;
     }
-    final total = _powerSamples.fold<int>(
+
+    final total = relevantSamples.fold<int>(
       0,
       (sum, sample) => sum + sample.watts,
     );
-    return total / _powerSamples.length;
+    return total / relevantSamples.length;
+  }
+
+  List<HrSample> _samplesWithinWindow(Duration window) {
+    final cutoff = DateTime.now().subtract(window);
+    return _hrSamples
+        .where((sample) => sample.timestamp.isAfter(cutoff))
+        .toList();
+  }
+
+  List<_PowerSample> _powerSamplesWithinWindow(Duration window) {
+    final cutoff = DateTime.now().subtract(window);
+    return _powerSamples
+        .where((sample) => sample.timestamp.isAfter(cutoff))
+        .toList();
+  }
+
+  void _updatePowerDriftStats() {
+    final currentOneMinuteAvg = _calculatePowerAverage(window: _powerAvgWindow);
+    if (currentOneMinuteAvg == null) {
+      return;
+    }
+
+    if (currentOneMinuteAvg > _maxOneMinuteAveragePower) {
+      _maxOneMinuteAveragePower = currentOneMinuteAvg;
+    }
+
+    final driftWatts = _maxOneMinuteAveragePower - currentOneMinuteAvg;
+    state = state.copyWith(
+      averagePower: currentOneMinuteAvg,
+      driftWatts: driftWatts,
+    );
   }
 
   void _trimOldSamples() {
-    final cutoff = DateTime.now().subtract(_avgWindow);
+    final cutoff = DateTime.now().subtract(_sampleRetentionWindow);
     _hrSamples.removeWhere((sample) => sample.timestamp.isBefore(cutoff));
     _powerSamples.removeWhere((sample) => sample.timestamp.isBefore(cutoff));
   }

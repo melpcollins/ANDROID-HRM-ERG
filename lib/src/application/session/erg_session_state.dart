@@ -10,6 +10,7 @@ class ErgSessionState extends Equatable {
     this.currentHr,
     this.averagePower,
     this.averageHr,
+    this.driftWatts,
     this.lastAdjustmentWatts,
     this.error,
   });
@@ -22,6 +23,7 @@ class ErgSessionState extends Equatable {
   final int? currentHr;
   final double? averagePower;
   final double? averageHr;
+  final double? driftWatts;
   final int? lastAdjustmentWatts;
   final String? error;
 
@@ -34,6 +36,7 @@ class ErgSessionState extends Equatable {
     int? currentHr,
     double? averagePower,
     double? averageHr,
+    double? driftWatts,
     int? lastAdjustmentWatts,
     String? error,
     bool clearError = false,
@@ -47,6 +50,7 @@ class ErgSessionState extends Equatable {
       currentHr: currentHr ?? this.currentHr,
       averagePower: averagePower ?? this.averagePower,
       averageHr: averageHr ?? this.averageHr,
+      driftWatts: driftWatts ?? this.driftWatts,
       lastAdjustmentWatts: lastAdjustmentWatts ?? this.lastAdjustmentWatts,
       error: clearError ? null : (error ?? this.error),
     );
@@ -62,6 +66,7 @@ class ErgSessionState extends Equatable {
     currentHr,
     averagePower,
     averageHr,
+    driftWatts,
     lastAdjustmentWatts,
     error,
   ];
