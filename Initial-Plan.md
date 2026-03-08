@@ -18,11 +18,11 @@
 ## Implementation Changes (MVP, Decision-Complete)
 - [x] Create a new Flutter app scaffold in this repo and commit a clean baseline.
 - [x] Add dependencies: `flutter_blue_plus`, `flutter_riverpod`, `equatable`, `collection`, `intl`.
-- [ ] Define core contracts and models.
-- [ ] Add `HrSample { bpm, timestamp }`, `PowerCommand { watts, timestamp, reason }`, `ControlConfig { targetHr, minPower=50, maxPower=500, loopSeconds=20, avgWindowSeconds=60 }`.
-- [ ] Add `HrMonitorRepository` interface for HR stream + reconnect handling.
-- [ ] Add `TrainerRepository` interface for FTMS connection + `setTargetPower(int watts)`.
-- [ ] Implement BLE scan/select/connect flow for both device roles and persist selected device IDs for reconnect.
+- [x] Define core contracts and models.
+- [x] Add `HrSample { bpm, timestamp }`, `PowerCommand { watts, timestamp, reason }`, `ControlConfig { targetHr, minPower=50, maxPower=500, loopSeconds=20, avgWindowSeconds=60 }`.
+- [x] Add `HrMonitorRepository` interface for HR stream + reconnect handling.
+- [x] Add `TrainerRepository` interface for FTMS connection + `setTargetPower(int watts)`.
+- [x] Implement BLE scan/select/connect flow for both device roles and persist selected device IDs for reconnect.
 - [ ] Implement HR pipeline: ingest 1 Hz HR samples, maintain rolling 60-second average, and handle sample gaps.
 - [ ] Implement control engine logic.
 - [ ] Compute `delta = hrAvg - targetHr`.
@@ -54,6 +54,8 @@
 - [ ] Hardware is available now for immediate real-device BLE validation.
 - [ ] Riverpod is the default state management approach.
 - [ ] Timing and adjustment table values are fixed for MVP unless safety validation requires change.
+
+
 
 
 
