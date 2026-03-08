@@ -25,9 +25,9 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
   StreamSubscription<HrSample>? _hrSubscription;
   StreamSubscription<int>? _powerSubscription;
   Timer? _controlTimer;
+  Duration _loopInterval = const Duration(seconds: 10);
 
   static const Duration _avgWindow = Duration(seconds: 60);
-  static const Duration _loopInterval = Duration(seconds: 20);
 
   void initialize() {
     _hrSubscription ??= _hrMonitorRepository.hrSamples.listen((sample) {
@@ -54,11 +54,15 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
   Future<void> startSession({
     required int startingWatts,
     required int targetHr,
+    required int loopSeconds,
   }) async {
+    _loopInterval = Duration(seconds: loopSeconds);
+
     state = state.copyWith(
       isRunning: true,
       startingWatts: startingWatts,
       targetHr: targetHr,
+      loopSeconds: loopSeconds,
       currentPower: startingWatts,
       clearError: true,
     );
@@ -92,7 +96,8 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
 
     final delta = avgHr - state.targetHr!;
     final adjustPerMinute = _mapDeltaToPowerPerMinute(delta);
-    final adjustPerLoop = (adjustPerMinute / 3.0).round();
+    final adjustPerLoop = (adjustPerMinute * (_loopInterval.inSeconds / 60.0))
+        .round();
 
     final nextPower = min(500, max(50, currentPower + adjustPerLoop));
 

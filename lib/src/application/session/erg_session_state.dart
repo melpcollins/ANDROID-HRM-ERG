@@ -5,6 +5,7 @@ class ErgSessionState extends Equatable {
     this.isRunning = false,
     this.startingWatts,
     this.targetHr,
+    this.loopSeconds,
     this.currentPower,
     this.currentHr,
     this.averagePower,
@@ -16,6 +17,7 @@ class ErgSessionState extends Equatable {
   final bool isRunning;
   final int? startingWatts;
   final int? targetHr;
+  final int? loopSeconds;
   final int? currentPower;
   final int? currentHr;
   final double? averagePower;
@@ -27,6 +29,7 @@ class ErgSessionState extends Equatable {
     bool? isRunning,
     int? startingWatts,
     int? targetHr,
+    int? loopSeconds,
     int? currentPower,
     int? currentHr,
     double? averagePower,
@@ -39,6 +42,7 @@ class ErgSessionState extends Equatable {
       isRunning: isRunning ?? this.isRunning,
       startingWatts: startingWatts ?? this.startingWatts,
       targetHr: targetHr ?? this.targetHr,
+      loopSeconds: loopSeconds ?? this.loopSeconds,
       currentPower: currentPower ?? this.currentPower,
       currentHr: currentHr ?? this.currentHr,
       averagePower: averagePower ?? this.averagePower,
@@ -53,6 +57,7 @@ class ErgSessionState extends Equatable {
     isRunning,
     startingWatts,
     targetHr,
+    loopSeconds,
     currentPower,
     currentHr,
     averagePower,

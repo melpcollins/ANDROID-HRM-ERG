@@ -13,6 +13,7 @@ void main() {
     expect(find.text('Wattbike Trainer'), findsOneWidget);
     expect(find.text('Starting Watts'), findsOneWidget);
     expect(find.text('Target Heart Rate'), findsOneWidget);
+    expect(find.text('Loop Interval (seconds)'), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
     expect(find.text('DISCONNECTED'), findsNWidgets(2));
   });

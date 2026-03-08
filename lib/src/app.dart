@@ -31,6 +31,7 @@ class DeviceSetupScreen extends ConsumerStatefulWidget {
 class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
   late final TextEditingController _startingWattsController;
   late final TextEditingController _targetHrController;
+  late final TextEditingController _loopSecondsController;
   bool _showHrmDetails = true;
   bool _showTrainerDetails = true;
 
@@ -39,12 +40,14 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     super.initState();
     _startingWattsController = TextEditingController(text: '100');
     _targetHrController = TextEditingController(text: '100');
+    _loopSecondsController = TextEditingController(text: '10');
   }
 
   @override
   void dispose() {
     _startingWattsController.dispose();
     _targetHrController.dispose();
+    _loopSecondsController.dispose();
     super.dispose();
   }
 
@@ -162,6 +165,16 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    TextField(
+                      controller: _loopSecondsController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Loop Interval (seconds)',
+                        hintText: 'e.g. 10',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     Align(
                       alignment: Alignment.centerLeft,
                       child: FilledButton(
@@ -172,12 +185,18 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                           final targetHr = int.tryParse(
                             _targetHrController.text.trim(),
                           );
+                          final loopSeconds = int.tryParse(
+                            _loopSecondsController.text.trim(),
+                          );
 
-                          if (startingWatts == null || targetHr == null) {
+                          if (startingWatts == null ||
+                              targetHr == null ||
+                              loopSeconds == null ||
+                              loopSeconds <= 0) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text(
-                                  'Please enter valid integers for watts and target HR.',
+                                  'Please enter valid values for watts, target HR, and loop seconds (> 0).',
                                 ),
                               ),
                             );
@@ -187,6 +206,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                           await sessionController.startSession(
                             startingWatts: startingWatts,
                             targetHr: targetHr,
+                            loopSeconds: loopSeconds,
                           );
                         },
                         child: const Text('Start'),
