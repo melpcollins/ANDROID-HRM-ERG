@@ -50,6 +50,24 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(connectSetupControllerProvider, (previous, next) {
+      if (previous?.hrStatus != ConnectionStatus.connected &&
+          next.hrStatus == ConnectionStatus.connected &&
+          _showHrmDetails) {
+        setState(() {
+          _showHrmDetails = false;
+        });
+      }
+
+      if (previous?.trainerStatus != ConnectionStatus.connected &&
+          next.trainerStatus == ConnectionStatus.connected &&
+          _showTrainerDetails) {
+        setState(() {
+          _showTrainerDetails = false;
+        });
+      }
+    });
+
     final connectState = ref.watch(connectSetupControllerProvider);
     final connectController = ref.read(connectSetupControllerProvider.notifier);
 
@@ -258,9 +276,9 @@ class _DeviceSection extends StatelessWidget {
     final statusColor = isConnected ? Colors.green : Colors.red;
     final statusText = isConnected ? 'CONNECTED' : 'DISCONNECTED';
     final showDetails = !isConnected || isExpanded;
-    final emphasisButtonStyle = OutlinedButton.styleFrom(
+    final scanButtonStyle = OutlinedButton.styleFrom(
       foregroundColor: Colors.green.shade700,
-      side: BorderSide(color: Colors.green.shade300),
+      side: BorderSide(color: Colors.grey.shade600),
     );
 
     return Card(
@@ -309,12 +327,11 @@ class _DeviceSection extends StatelessWidget {
                 spacing: 8,
                 children: [
                   OutlinedButton(
-                    style: emphasisButtonStyle,
+                    style: scanButtonStyle,
                     onPressed: isScanning ? null : () => onScan(),
                     child: Text(isScanning ? 'Scanning...' : 'Scan'),
                   ),
-                  OutlinedButton(
-                    style: emphasisButtonStyle,
+                  FilledButton(
                     onPressed: selectedDeviceId == null
                         ? null
                         : () => onReconnectSaved(),
@@ -374,4 +391,3 @@ class _MetricRow extends StatelessWidget {
     );
   }
 }
-

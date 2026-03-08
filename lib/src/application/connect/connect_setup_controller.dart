@@ -37,6 +37,17 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     final trainerId = await _trainerRepository.getSavedDeviceId();
 
     state = state.copyWith(selectedHrId: hrId, selectedTrainerId: trainerId);
+
+    await Future.wait<void>([
+      _attemptReconnect(
+        reconnect: reconnectHrMonitor,
+        hasSavedDevice: hrId != null && hrId.isNotEmpty,
+      ),
+      _attemptReconnect(
+        reconnect: reconnectTrainer,
+        hasSavedDevice: trainerId != null && trainerId.isNotEmpty,
+      ),
+    ]);
   }
 
   Future<void> scanHrMonitors() async {
@@ -90,6 +101,7 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
       await _hrMonitorRepository.reconnect();
     } catch (error) {
       state = state.copyWith(hrError: error.toString());
+      rethrow;
     }
   }
 
@@ -99,6 +111,27 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
       await _trainerRepository.reconnect();
     } catch (error) {
       state = state.copyWith(trainerError: error.toString());
+      rethrow;
+    }
+  }
+
+  Future<void> _attemptReconnect({
+    required Future<void> Function() reconnect,
+    required bool hasSavedDevice,
+  }) async {
+    if (!hasSavedDevice) {
+      return;
+    }
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await reconnect();
+        return;
+      } catch (_) {
+        if (attempt < 2) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
+      }
     }
   }
 
