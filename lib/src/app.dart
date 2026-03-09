@@ -32,6 +32,8 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
   late final TextEditingController _startingWattsController;
   late final TextEditingController _targetHrController;
   late final TextEditingController _loopSecondsController;
+  late final TextEditingController _durationHoursController;
+  late final TextEditingController _durationMinutesController;
   bool _showHrmDetails = true;
   bool _showTrainerDetails = true;
 
@@ -41,6 +43,8 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     _startingWattsController = TextEditingController(text: '100');
     _targetHrController = TextEditingController(text: '100');
     _loopSecondsController = TextEditingController(text: '10');
+    _durationHoursController = TextEditingController(text: '1');
+    _durationMinutesController = TextEditingController(text: '0');
   }
 
   @override
@@ -48,6 +52,8 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     _startingWattsController.dispose();
     _targetHrController.dispose();
     _loopSecondsController.dispose();
+    _durationHoursController.dispose();
+    _durationMinutesController.dispose();
     super.dispose();
   }
 
@@ -175,6 +181,34 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _durationHoursController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Duration Hours',
+                              hintText: 'e.g. 1',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _durationMinutesController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Duration Minutes',
+                              hintText: 'e.g. 30',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
                     Align(
                       alignment: Alignment.centerLeft,
                       child: FilledButton(
@@ -188,15 +222,27 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                           final loopSeconds = int.tryParse(
                             _loopSecondsController.text.trim(),
                           );
+                          final durationHours = int.tryParse(
+                            _durationHoursController.text.trim(),
+                          );
+                          final durationMinutes = int.tryParse(
+                            _durationMinutesController.text.trim(),
+                          );
 
                           if (startingWatts == null ||
                               targetHr == null ||
                               loopSeconds == null ||
-                              loopSeconds <= 0) {
+                              loopSeconds <= 0 ||
+                              durationHours == null ||
+                              durationMinutes == null ||
+                              durationHours < 0 ||
+                              durationMinutes < 0 ||
+                              durationMinutes > 59 ||
+                              (durationHours == 0 && durationMinutes == 0)) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text(
-                                  'Please enter valid values for watts, target HR, and loop seconds (> 0).',
+                                  'Please enter valid values. Duration must be at least 00:01.',
                                 ),
                               ),
                             );
@@ -207,6 +253,10 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                             startingWatts: startingWatts,
                             targetHr: targetHr,
                             loopSeconds: loopSeconds,
+                            sessionDuration: Duration(
+                              hours: durationHours,
+                              minutes: durationMinutes,
+                            ),
                           );
                         },
                         child: const Text('Start'),
@@ -235,7 +285,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Live Session (1-min averages)',
+                      'Live Session (20-min power average)',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 12),
@@ -250,14 +300,29 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                       value: '${sessionState.targetHr ?? '--'} bpm',
                     ),
                     _MetricRow(
+                      label: 'Countdown',
+                      value: _formatDuration(sessionState.remainingDuration),
+                    ),
+                    _MetricRow(
+                      label: 'Session Status',
+                      value: sessionState.isCooldown ? 'Cooldown' : 'Active',
+                      valueColor: sessionState.isCooldown
+                          ? Colors.orange.shade700
+                          : null,
+                    ),
+                    _MetricRow(
                       label: 'Power',
                       value: '${sessionState.currentPower ?? '--'} W',
                     ),
                     _MetricRow(
                       label: 'Drift',
-                      value: sessionState.driftWatts == null
+                      value: sessionState.driftPercent == null
                           ? '--'
-                          : '${sessionState.driftWatts!.toStringAsFixed(1)} W',
+                          : '${sessionState.driftPercent!.toStringAsFixed(1)}%',
+                      valueColor: _driftColor(
+                        context,
+                        driftPercent: sessionState.driftPercent,
+                      ),
                     ),
                   ],
                 ),
@@ -266,6 +331,31 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
         ],
       ),
     );
+  }
+
+  String _formatDuration(Duration? duration) {
+    if (duration == null) {
+      return '--';
+    }
+
+    final totalSeconds = duration.inSeconds;
+    final hours = (totalSeconds ~/ 3600).toString().padLeft(2, '0');
+    final minutes = ((totalSeconds % 3600) ~/ 60).toString().padLeft(2, '0');
+    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$hours:$minutes:$seconds';
+  }
+
+  Color? _driftColor(BuildContext context, {required double? driftPercent}) {
+    if (driftPercent == null) {
+      return null;
+    }
+    if (driftPercent <= 5) {
+      return Colors.green.shade700;
+    }
+    if (driftPercent <= 10) {
+      return Colors.amber.shade800;
+    }
+    return Theme.of(context).colorScheme.error;
   }
 }
 
@@ -399,10 +489,11 @@ class _DeviceSection extends StatelessWidget {
 }
 
 class _MetricRow extends StatelessWidget {
-  const _MetricRow({required this.label, required this.value});
+  const _MetricRow({required this.label, required this.value, this.valueColor});
 
   final String label;
   final String value;
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) {
@@ -411,7 +502,10 @@ class _MetricRow extends StatelessWidget {
       child: Row(
         children: [
           Expanded(child: Text(label)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(
+            value,
+            style: TextStyle(fontWeight: FontWeight.w600, color: valueColor),
+          ),
         ],
       ),
     );

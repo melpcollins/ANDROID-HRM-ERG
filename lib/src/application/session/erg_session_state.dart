@@ -6,11 +6,15 @@ class ErgSessionState extends Equatable {
     this.startingWatts,
     this.targetHr,
     this.loopSeconds,
+    this.sessionDuration,
+    this.remainingDuration,
+    this.isCooldown = false,
     this.currentPower,
     this.currentHr,
     this.averagePower,
     this.averageHr,
     this.driftWatts,
+    this.driftPercent,
     this.lastAdjustmentWatts,
     this.error,
   });
@@ -19,11 +23,15 @@ class ErgSessionState extends Equatable {
   final int? startingWatts;
   final int? targetHr;
   final int? loopSeconds;
+  final Duration? sessionDuration;
+  final Duration? remainingDuration;
+  final bool isCooldown;
   final int? currentPower;
   final int? currentHr;
   final double? averagePower;
   final double? averageHr;
   final double? driftWatts;
+  final double? driftPercent;
   final int? lastAdjustmentWatts;
   final String? error;
 
@@ -32,11 +40,15 @@ class ErgSessionState extends Equatable {
     int? startingWatts,
     int? targetHr,
     int? loopSeconds,
+    Duration? sessionDuration,
+    Duration? remainingDuration,
+    bool? isCooldown,
     int? currentPower,
     int? currentHr,
     double? averagePower,
     double? averageHr,
     double? driftWatts,
+    double? driftPercent,
     int? lastAdjustmentWatts,
     String? error,
     bool clearError = false,
@@ -46,11 +58,15 @@ class ErgSessionState extends Equatable {
       startingWatts: startingWatts ?? this.startingWatts,
       targetHr: targetHr ?? this.targetHr,
       loopSeconds: loopSeconds ?? this.loopSeconds,
+      sessionDuration: sessionDuration ?? this.sessionDuration,
+      remainingDuration: remainingDuration ?? this.remainingDuration,
+      isCooldown: isCooldown ?? this.isCooldown,
       currentPower: currentPower ?? this.currentPower,
       currentHr: currentHr ?? this.currentHr,
       averagePower: averagePower ?? this.averagePower,
       averageHr: averageHr ?? this.averageHr,
       driftWatts: driftWatts ?? this.driftWatts,
+      driftPercent: driftPercent ?? this.driftPercent,
       lastAdjustmentWatts: lastAdjustmentWatts ?? this.lastAdjustmentWatts,
       error: clearError ? null : (error ?? this.error),
     );
@@ -62,11 +78,15 @@ class ErgSessionState extends Equatable {
     startingWatts,
     targetHr,
     loopSeconds,
+    sessionDuration,
+    remainingDuration,
+    isCooldown,
     currentPower,
     currentHr,
     averagePower,
     averageHr,
     driftWatts,
+    driftPercent,
     lastAdjustmentWatts,
     error,
   ];

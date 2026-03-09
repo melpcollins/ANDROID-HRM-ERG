@@ -25,12 +25,14 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
   StreamSubscription<HrSample>? _hrSubscription;
   StreamSubscription<int>? _powerSubscription;
   Timer? _controlTimer;
+  Timer? _countdownTimer;
   Duration _loopInterval = const Duration(seconds: 10);
-  double _maxOneMinuteAveragePower = 0;
+  double _maxRollingAveragePower = 0;
 
   static const Duration _hrAvgWindow = Duration(seconds: 10);
-  static const Duration _powerAvgWindow = Duration(seconds: 60);
-  static const Duration _sampleRetentionWindow = Duration(seconds: 60);
+  static const Duration _powerAvgWindow = Duration(minutes: 20);
+  static const Duration _cooldownLeadTime = Duration(minutes: 5);
+  static const int _cooldownTargetHr = 95;
 
   void initialize() {
     _hrSubscription ??= _hrMonitorRepository.hrSamples.listen((sample) {
@@ -46,12 +48,7 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
     _powerSubscription ??= _trainerRepository.currentPower.listen((watts) {
       _powerSamples.add(_PowerSample(watts: watts, timestamp: DateTime.now()));
       _trimOldSamples();
-      _updatePowerDriftStats();
-
-      state = state.copyWith(
-        currentPower: watts,
-        averagePower: _calculatePowerAverage(window: _powerAvgWindow),
-      );
+      _updatePowerDriftStats(currentPower: watts);
     });
   }
 
@@ -59,9 +56,10 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
     required int startingWatts,
     required int targetHr,
     required int loopSeconds,
+    required Duration sessionDuration,
   }) async {
     _loopInterval = Duration(seconds: loopSeconds);
-    _maxOneMinuteAveragePower = 0;
+    _maxRollingAveragePower = 0;
     _hrSamples.clear();
     _powerSamples.clear();
 
@@ -70,8 +68,12 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
       startingWatts: startingWatts,
       targetHr: targetHr,
       loopSeconds: loopSeconds,
+      sessionDuration: sessionDuration,
+      remainingDuration: sessionDuration,
+      isCooldown: false,
       currentPower: startingWatts,
       driftWatts: 0,
+      driftPercent: null,
       averagePower: null,
       averageHr: null,
       clearError: true,
@@ -81,12 +83,53 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
 
     _controlTimer?.cancel();
     _controlTimer = Timer.periodic(_loopInterval, (_) => _runControlTick());
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _runCountdownTick(),
+    );
   }
 
   Future<void> stopSession() async {
     _controlTimer?.cancel();
     _controlTimer = null;
-    state = state.copyWith(isRunning: false);
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+    state = state.copyWith(isRunning: false, isCooldown: false);
+  }
+
+  Future<void> _runCountdownTick() async {
+    if (!state.isRunning) {
+      return;
+    }
+
+    final remaining = state.remainingDuration;
+    if (remaining == null) {
+      return;
+    }
+
+    final nextRemaining = remaining - const Duration(seconds: 1);
+    final clampedRemaining = nextRemaining.isNegative
+        ? Duration.zero
+        : nextRemaining;
+
+    var nextTargetHr = state.targetHr;
+    var nextIsCooldown = state.isCooldown;
+
+    if (!state.isCooldown && clampedRemaining <= _cooldownLeadTime) {
+      nextTargetHr = _cooldownTargetHr;
+      nextIsCooldown = true;
+    }
+
+    state = state.copyWith(
+      remainingDuration: clampedRemaining,
+      targetHr: nextTargetHr,
+      isCooldown: nextIsCooldown,
+    );
+
+    if (clampedRemaining == Duration.zero) {
+      await stopSession();
+    }
   }
 
   Future<void> _runControlTick() async {
@@ -187,32 +230,44 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
         .toList();
   }
 
-  void _updatePowerDriftStats() {
-    final currentOneMinuteAvg = _calculatePowerAverage(window: _powerAvgWindow);
-    if (currentOneMinuteAvg == null) {
+  void _updatePowerDriftStats({required int currentPower}) {
+    final currentRollingAvg = _calculatePowerAverage(window: _powerAvgWindow);
+    if (currentRollingAvg == null) {
       return;
     }
 
-    if (currentOneMinuteAvg > _maxOneMinuteAveragePower) {
-      _maxOneMinuteAveragePower = currentOneMinuteAvg;
+    if (currentRollingAvg > _maxRollingAveragePower) {
+      _maxRollingAveragePower = currentRollingAvg;
     }
 
-    final driftWatts = _maxOneMinuteAveragePower - currentOneMinuteAvg;
+    final driftWatts = _maxRollingAveragePower - currentRollingAvg;
+    final driftPercent = (driftWatts <= 0 || currentPower <= 0)
+        ? null
+        : (driftWatts / currentPower) * 100;
+
     state = state.copyWith(
-      averagePower: currentOneMinuteAvg,
+      currentPower: currentPower,
+      averagePower: currentRollingAvg,
       driftWatts: driftWatts,
+      driftPercent: driftPercent,
     );
   }
 
   void _trimOldSamples() {
-    final cutoff = DateTime.now().subtract(_sampleRetentionWindow);
-    _hrSamples.removeWhere((sample) => sample.timestamp.isBefore(cutoff));
-    _powerSamples.removeWhere((sample) => sample.timestamp.isBefore(cutoff));
+    final now = DateTime.now();
+    final hrCutoff = now.subtract(_hrAvgWindow);
+    final powerCutoff = now.subtract(_powerAvgWindow);
+
+    _hrSamples.removeWhere((sample) => sample.timestamp.isBefore(hrCutoff));
+    _powerSamples.removeWhere(
+      (sample) => sample.timestamp.isBefore(powerCutoff),
+    );
   }
 
   @override
   void dispose() {
     _controlTimer?.cancel();
+    _countdownTimer?.cancel();
     _hrSubscription?.cancel();
     _powerSubscription?.cancel();
     super.dispose();
