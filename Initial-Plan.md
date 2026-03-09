@@ -31,7 +31,7 @@
 - [ ] Execute control tick every 20 seconds only when trainer is connected and HR freshness is <= 5 seconds.
 - [ ] Add safety behavior: pause control on stale HR/disconnect, manual stop, explicit pause reason in UI.
 - [x] Build MVP UI for setup + Start controls + live 1-minute average display.
-- [ ] Create connect screen with scan/select/connect states for HR monitor and Wattbike.
+- [x] Create connect screen with scan/select/connect states for HR monitor and Wattbike.
 - [ ] Create ride screen with current HR, 60s average HR, target HR control, current power command, loop countdown, and status banners.
 - [ ] Add per-session CSV logging (`timestamp, hr, hr_avg, target_hr, delta, power_cmd, status`) to app documents storage.
 - [ ] Add structured debug logs around BLE events and each control tick.
@@ -52,7 +52,7 @@
 - [ ] Android-only MVP (iOS deferred).
 - [ ] Scope locked to MVP Control Loop for first release.
 - [ ] Hardware is available now for immediate real-device BLE validation.
-- [ ] Riverpod is the default state management approach.
+- [x] Riverpod is the default state management approach.
 - [ ] Timing and adjustment table values are fixed for MVP unless safety validation requires change.
 
 
