@@ -152,4 +152,33 @@ void main() {
     final context = tester.element(find.text('21.4%'));
     expect(text.style?.color, equals(Theme.of(context).colorScheme.error));
   });
+
+  testWidgets('shows end-of-session summary and zone 2 warning', (
+    WidgetTester tester,
+  ) async {
+    final trainerRepo = FakeTrainerRepository();
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: trainerRepo,
+    );
+
+    await startSession(tester, hours: 0, minutes: 6);
+    trainerRepo.emitPower(100);
+    trainerRepo.emitPower(88);
+    await tester.pump();
+
+    await tester.pump(const Duration(minutes: 6));
+
+    expect(find.textContaining('Your max 20 min power was'), findsOneWidget);
+    expect(
+      find.textContaining('Your ending rolling power was'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Your drift was'), findsOneWidget);
+    expect(
+      find.text('Warning: this was likely above zone 2 effort.'),
+      findsOneWidget,
+    );
+  });
 }

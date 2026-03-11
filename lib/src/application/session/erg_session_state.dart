@@ -15,6 +15,10 @@ class ErgSessionState extends Equatable {
     this.averageHr,
     this.driftWatts,
     this.driftPercent,
+    this.maxRollingPower,
+    this.endingRollingPower,
+    this.endSessionSummary,
+    this.endSessionZone2Warning = false,
     this.lastAdjustmentWatts,
     this.error,
   });
@@ -32,6 +36,10 @@ class ErgSessionState extends Equatable {
   final double? averageHr;
   final double? driftWatts;
   final double? driftPercent;
+  final double? maxRollingPower;
+  final double? endingRollingPower;
+  final String? endSessionSummary;
+  final bool endSessionZone2Warning;
   final int? lastAdjustmentWatts;
   final String? error;
 
@@ -49,9 +57,14 @@ class ErgSessionState extends Equatable {
     double? averageHr,
     double? driftWatts,
     double? driftPercent,
+    double? maxRollingPower,
+    double? endingRollingPower,
+    String? endSessionSummary,
+    bool? endSessionZone2Warning,
     int? lastAdjustmentWatts,
     String? error,
     bool clearError = false,
+    bool clearEndSessionSummary = false,
   }) {
     return ErgSessionState(
       isRunning: isRunning ?? this.isRunning,
@@ -67,6 +80,13 @@ class ErgSessionState extends Equatable {
       averageHr: averageHr ?? this.averageHr,
       driftWatts: driftWatts ?? this.driftWatts,
       driftPercent: driftPercent ?? this.driftPercent,
+      maxRollingPower: maxRollingPower ?? this.maxRollingPower,
+      endingRollingPower: endingRollingPower ?? this.endingRollingPower,
+      endSessionSummary: clearEndSessionSummary
+          ? null
+          : (endSessionSummary ?? this.endSessionSummary),
+      endSessionZone2Warning:
+          endSessionZone2Warning ?? this.endSessionZone2Warning,
       lastAdjustmentWatts: lastAdjustmentWatts ?? this.lastAdjustmentWatts,
       error: clearError ? null : (error ?? this.error),
     );
@@ -87,6 +107,10 @@ class ErgSessionState extends Equatable {
     averageHr,
     driftWatts,
     driftPercent,
+    maxRollingPower,
+    endingRollingPower,
+    endSessionSummary,
+    endSessionZone2Warning,
     lastAdjustmentWatts,
     error,
   ];

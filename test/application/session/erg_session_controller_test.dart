@@ -5,6 +5,18 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../support/fake_repositories.dart';
 
 void main() {
+  void runControlTickWithFreshHr({
+    required FakeAsync async,
+    required FakeHrMonitorRepository hrRepo,
+    required int bpm,
+  }) {
+    async.elapse(const Duration(seconds: 9));
+    hrRepo.emitHr(bpm);
+    async.flushMicrotasks();
+    async.elapse(const Duration(seconds: 1));
+    async.flushMicrotasks();
+  }
+
   group('ErgSessionController countdown and cooldown', () {
     test(
       'starts with configured duration and enters cooldown at 5 minutes',
@@ -123,5 +135,233 @@ void main() {
         });
       },
     );
+
+    test('freezes drift and rolling power tracking once cooldown starts', () {
+      fakeAsync((async) {
+        final trainerRepo = FakeTrainerRepository();
+        final controller = ErgSessionController(
+          hrMonitorRepository: FakeHrMonitorRepository(),
+          trainerRepository: trainerRepo,
+        )..initialize();
+
+        controller.startSession(
+          startingWatts: 100,
+          targetHr: 120,
+          loopSeconds: 10,
+          sessionDuration: const Duration(minutes: 6),
+        );
+        async.flushMicrotasks();
+
+        trainerRepo.emitPower(100);
+        trainerRepo.emitPower(88);
+        async.flushMicrotasks();
+
+        final driftBeforeCooldown = controller.state.driftPercent;
+        final rollingBeforeCooldown = controller.state.averagePower;
+        final maxBeforeCooldown = controller.state.maxRollingPower;
+
+        async.elapse(const Duration(seconds: 60));
+        async.flushMicrotasks();
+        expect(controller.state.isCooldown, isTrue);
+
+        trainerRepo.emitPower(70);
+        async.flushMicrotasks();
+
+        expect(controller.state.currentPower, 70);
+        expect(
+          controller.state.driftPercent,
+          closeTo(driftBeforeCooldown!, 0.01),
+        );
+        expect(
+          controller.state.averagePower,
+          closeTo(rollingBeforeCooldown!, 0.01),
+        );
+        expect(
+          controller.state.maxRollingPower,
+          closeTo(maxBeforeCooldown!, 0.01),
+        );
+      });
+    });
+
+    test(
+      'builds end-of-session summary and zone 2 warning when drift > 5%',
+      () {
+        fakeAsync((async) {
+          final trainerRepo = FakeTrainerRepository();
+          final controller = ErgSessionController(
+            hrMonitorRepository: FakeHrMonitorRepository(),
+            trainerRepository: trainerRepo,
+          )..initialize();
+
+          controller.startSession(
+            startingWatts: 100,
+            targetHr: 120,
+            loopSeconds: 10,
+            sessionDuration: const Duration(seconds: 2),
+          );
+          async.flushMicrotasks();
+
+          trainerRepo.emitPower(100);
+          trainerRepo.emitPower(88);
+          async.flushMicrotasks();
+
+          async.elapse(const Duration(seconds: 2));
+          async.flushMicrotasks();
+
+          expect(controller.state.isRunning, isFalse);
+          expect(
+            controller.state.endSessionSummary,
+            contains('Your max 20 min power was'),
+          );
+          expect(
+            controller.state.endSessionSummary,
+            contains('Your ending rolling power was'),
+          );
+          expect(
+            controller.state.endSessionSummary,
+            contains('Your drift was'),
+          );
+          expect(controller.state.endSessionZone2Warning, isTrue);
+        });
+      },
+    );
+  });
+
+  group('ErgSessionController UC-04 automatic power adjustment', () {
+    test('sends power commands at loop interval and increases when HR is low', () {
+      fakeAsync((async) {
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = ErgSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+        )..initialize();
+
+        controller.startSession(
+          startingWatts: 200,
+          targetHr: 120,
+          loopSeconds: 10,
+          sessionDuration: const Duration(minutes: 30),
+        );
+        async.flushMicrotasks();
+
+        for (var i = 0; i < 6; i++) {
+          runControlTickWithFreshHr(async: async, hrRepo: hrRepo, bpm: 117);
+        }
+
+        expect(trainerRepo.targetPowerWrites.length, 7);
+        expect(controller.state.currentPower, 210);
+        expect(controller.state.lastAdjustmentWatts, 2);
+      });
+    });
+
+    test('reduces power when HR is above target', () {
+      fakeAsync((async) {
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = ErgSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+        )..initialize();
+
+        controller.startSession(
+          startingWatts: 200,
+          targetHr: 120,
+          loopSeconds: 10,
+          sessionDuration: const Duration(minutes: 30),
+        );
+        async.flushMicrotasks();
+
+        for (var i = 0; i < 6; i++) {
+          runControlTickWithFreshHr(async: async, hrRepo: hrRepo, bpm: 123);
+        }
+
+        expect(controller.state.currentPower, 190);
+        expect(controller.state.lastAdjustmentWatts, -2);
+      });
+    });
+
+    test('matches +3 W/min band over time for a 10-second loop', () {
+      fakeAsync((async) {
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = ErgSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+        )..initialize();
+
+        controller.startSession(
+          startingWatts: 200,
+          targetHr: 120,
+          loopSeconds: 10,
+          sessionDuration: const Duration(minutes: 30),
+        );
+        async.flushMicrotasks();
+
+        for (var i = 0; i < 6; i++) {
+          runControlTickWithFreshHr(async: async, hrRepo: hrRepo, bpm: 119);
+        }
+
+        expect(controller.state.currentPower, 203);
+      });
+    });
+
+    test('clamps next power to safe range 50..500 W', () {
+      fakeAsync((async) {
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = ErgSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+        )..initialize();
+
+        controller.startSession(
+          startingWatts: 499,
+          targetHr: 120,
+          loopSeconds: 10,
+          sessionDuration: const Duration(minutes: 30),
+        );
+        async.flushMicrotasks();
+        runControlTickWithFreshHr(async: async, hrRepo: hrRepo, bpm: 117);
+        expect(controller.state.currentPower, 500);
+
+        controller.startSession(
+          startingWatts: 51,
+          targetHr: 120,
+          loopSeconds: 10,
+          sessionDuration: const Duration(minutes: 30),
+        );
+        async.flushMicrotasks();
+        runControlTickWithFreshHr(async: async, hrRepo: hrRepo, bpm: 123);
+        expect(controller.state.currentPower, 50);
+      });
+    });
+
+    test('sets error and skips adjustment when no HR data is available', () {
+      fakeAsync((async) {
+        final trainerRepo = FakeTrainerRepository();
+        final controller = ErgSessionController(
+          hrMonitorRepository: FakeHrMonitorRepository(),
+          trainerRepository: trainerRepo,
+        )..initialize();
+
+        controller.startSession(
+          startingWatts: 200,
+          targetHr: 120,
+          loopSeconds: 10,
+          sessionDuration: const Duration(minutes: 30),
+        );
+        async.flushMicrotasks();
+
+        async.elapse(const Duration(seconds: 10));
+        async.flushMicrotasks();
+
+        expect(
+          controller.state.error,
+          'No HR data yet. Waiting for monitor samples...',
+        );
+        expect(trainerRepo.targetPowerWrites, [200]);
+      });
+    });
   });
 }

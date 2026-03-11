@@ -31,10 +31,21 @@ Give the rider a clear real-time view of session stability and control.
 - During the first 20 minutes of a session, the rolling average uses all available power samples so far.
 - Countdown starts from the session duration configured at session start.
 - When remaining time is `<= 00:05:00`, session enters cooldown.
+- On cooldown entry, stop tracking drift, highest rolling 20-minute power, and current rolling 20-minute power (freeze final values from the moment cooldown begins).
 - In cooldown, target heart rate is forced to `95 bpm` and cooldown status is shown.
+
+## End of Session Summary
+- At the end of the session, show:
+  - `Your max 20 min power was X`
+  - `Your ending rolling power was Y`
+  - `Your drift was Z`
+- If `Z > 5%`, also show:
+  - `Warning: this was likely above zone 2 effort.`
 
 ## Expected App Behavior
 - Metrics update continuously while session is running.
 - Countdown is visible in live metrics and updates continuously.
 - Cooldown status is visible in live metrics when active.
 - Drift percentage updates continuously and color changes based on the threshold bands above.
+- After cooldown starts, drift and rolling power values no longer change.
+- End-of-session summary displays the frozen cooldown-entry values for `X`, `Y`, and `Z`.

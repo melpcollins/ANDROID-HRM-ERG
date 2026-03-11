@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/providers.dart';
+import 'application/session/erg_session_state.dart';
 import 'domain/models/ble_device_info.dart';
 import 'domain/models/connection_status.dart';
 
@@ -272,6 +273,38 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                       ),
                     ),
                   ],
+                  if (!sessionState.isRunning &&
+                      sessionState.endSessionSummary != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.teal.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            sessionState.endSessionSummary!,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          if (sessionState.endSessionZone2Warning) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Warning: this was likely above zone 2 effort.',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -324,6 +357,56 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                         driftPercent: sessionState.driftPercent,
                       ),
                     ),
+                    if (sessionState.isCooldown) ...[
+                      const SizedBox(height: 12),
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      Text(
+                        'End of Session Summary (Live)',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 6),
+                      _MetricRow(
+                        label: 'Max Rolling Power',
+                        value: _formatPower(sessionState.maxRollingPower),
+                      ),
+                      _MetricRow(
+                        label: 'Current Rolling Power',
+                        value: _formatPower(
+                          sessionState.endingRollingPower ??
+                              sessionState.averagePower,
+                        ),
+                      ),
+                      _MetricRow(
+                        label: 'Summary Drift Watts',
+                        value: _formatPower(sessionState.driftWatts),
+                      ),
+                      _MetricRow(
+                        label: 'Summary Drift Percent',
+                        value: sessionState.driftPercent == null
+                            ? '--'
+                            : '${sessionState.driftPercent!.toStringAsFixed(1)}%',
+                        valueColor: _driftColor(
+                          context,
+                          driftPercent: sessionState.driftPercent,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _buildLiveSummaryText(sessionState),
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      if ((sessionState.driftPercent ?? 0) > 5) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Warning: this is likely above zone 2 effort.',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
                   ],
                 ),
               ),
@@ -356,6 +439,27 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       return Colors.amber.shade800;
     }
     return Theme.of(context).colorScheme.error;
+  }
+
+  String _formatPower(double? watts) {
+    if (watts == null) {
+      return '--';
+    }
+    return '${watts.toStringAsFixed(1)} W';
+  }
+
+  String _buildLiveSummaryText(ErgSessionState sessionState) {
+    final maxRollingPower = _formatPower(sessionState.maxRollingPower);
+    final currentRollingPower = _formatPower(
+      sessionState.endingRollingPower ?? sessionState.averagePower,
+    );
+    final driftPercent = sessionState.driftPercent == null
+        ? '--'
+        : '${sessionState.driftPercent!.toStringAsFixed(1)}%';
+
+    return 'Your max rolling power is $maxRollingPower, '
+        'current rolling power is $currentRollingPower, '
+        'drift is $driftPercent.';
   }
 }
 

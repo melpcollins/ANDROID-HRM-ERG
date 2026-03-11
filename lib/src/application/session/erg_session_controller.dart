@@ -28,6 +28,8 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
   Timer? _countdownTimer;
   Duration _loopInterval = const Duration(seconds: 10);
   double _maxRollingAveragePower = 0;
+  bool _cooldownSnapshotCaptured = false;
+  int _pendingPowerAdjustmentNumerator = 0;
 
   static const Duration _hrAvgWindow = Duration(seconds: 10);
   static const Duration _powerAvgWindow = Duration(minutes: 20);
@@ -60,6 +62,8 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
   }) async {
     _loopInterval = Duration(seconds: loopSeconds);
     _maxRollingAveragePower = 0;
+    _cooldownSnapshotCaptured = false;
+    _pendingPowerAdjustmentNumerator = 0;
     _hrSamples.clear();
     _powerSamples.clear();
 
@@ -74,9 +78,13 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
       currentPower: startingWatts,
       driftWatts: 0,
       driftPercent: null,
+      maxRollingPower: null,
+      endingRollingPower: null,
+      endSessionZone2Warning: false,
       averagePower: null,
       averageHr: null,
       clearError: true,
+      clearEndSessionSummary: true,
     );
 
     await _trainerRepository.setTargetPower(startingWatts);
@@ -91,11 +99,20 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
   }
 
   Future<void> stopSession() async {
+    final wasRunning = state.isRunning;
+    final summary = wasRunning ? _buildEndSessionSummary() : null;
+    final showZone2Warning = wasRunning && (state.driftPercent ?? 0) > 5;
+
     _controlTimer?.cancel();
     _controlTimer = null;
     _countdownTimer?.cancel();
     _countdownTimer = null;
-    state = state.copyWith(isRunning: false, isCooldown: false);
+    state = state.copyWith(
+      isRunning: false,
+      isCooldown: false,
+      endSessionSummary: summary,
+      endSessionZone2Warning: showZone2Warning,
+    );
   }
 
   Future<void> _runCountdownTick() async {
@@ -117,6 +134,7 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
     var nextIsCooldown = state.isCooldown;
 
     if (!state.isCooldown && clampedRemaining <= _cooldownLeadTime) {
+      _freezeTrackingAtCooldownEntry();
       nextTargetHr = _cooldownTargetHr;
       nextIsCooldown = true;
     }
@@ -149,8 +167,10 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
 
     final delta = avgHr - state.targetHr!;
     final adjustPerMinute = _mapDeltaToPowerPerMinute(delta);
-    final adjustPerLoop = (adjustPerMinute * (_loopInterval.inSeconds / 60.0))
-        .round();
+    _pendingPowerAdjustmentNumerator +=
+        adjustPerMinute * _loopInterval.inSeconds;
+    final adjustPerLoop = _pendingPowerAdjustmentNumerator ~/ 60;
+    _pendingPowerAdjustmentNumerator -= adjustPerLoop * 60;
 
     final nextPower = min(500, max(50, currentPower + adjustPerLoop));
 
@@ -231,6 +251,11 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
   }
 
   void _updatePowerDriftStats({required int currentPower}) {
+    if (state.isCooldown) {
+      state = state.copyWith(currentPower: currentPower);
+      return;
+    }
+
     final currentRollingAvg = _calculatePowerAverage(window: _powerAvgWindow);
     if (currentRollingAvg == null) {
       return;
@@ -250,7 +275,48 @@ class ErgSessionController extends StateNotifier<ErgSessionState> {
       averagePower: currentRollingAvg,
       driftWatts: driftWatts,
       driftPercent: driftPercent,
+      maxRollingPower: _maxRollingAveragePower,
+      endingRollingPower: currentRollingAvg,
     );
+  }
+
+  void _freezeTrackingAtCooldownEntry() {
+    if (_cooldownSnapshotCaptured) {
+      return;
+    }
+
+    _cooldownSnapshotCaptured = true;
+    final maxRollingPower = _maxRollingAveragePower > 0
+        ? _maxRollingAveragePower
+        : state.averagePower;
+
+    state = state.copyWith(
+      maxRollingPower: maxRollingPower,
+      endingRollingPower: state.averagePower,
+    );
+  }
+
+  String _buildEndSessionSummary() {
+    final max20Min = _formatPower(state.maxRollingPower);
+    final endingRolling = _formatPower(state.endingRollingPower);
+    final drift = _formatDriftPercent(state.driftPercent);
+    return 'Your max 20 min power was $max20Min, '
+        'Your ending rolling power was $endingRolling, '
+        'Your drift was $drift.';
+  }
+
+  String _formatPower(double? watts) {
+    if (watts == null) {
+      return '--';
+    }
+    return '${watts.toStringAsFixed(1)} W';
+  }
+
+  String _formatDriftPercent(double? driftPercent) {
+    if (driftPercent == null) {
+      return '--';
+    }
+    return '${driftPercent.toStringAsFixed(1)}%';
   }
 
   void _trimOldSamples() {
