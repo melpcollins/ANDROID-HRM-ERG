@@ -1,0 +1,504 @@
+import 'dart:async';
+import 'dart:math';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../domain/models/connection_status.dart';
+import '../../domain/models/hr_sample.dart';
+import '../../domain/models/pause_reason.dart';
+import '../../domain/models/power_sample.dart';
+import '../../domain/models/workout_config.dart';
+import '../../domain/models/workout_phase.dart';
+import '../../domain/models/workout_type.dart';
+import '../../domain/repositories/hr_monitor_repository.dart';
+import '../../domain/repositories/trainer_repository.dart';
+import 'hr_averager.dart';
+import 'power_adjustment_policy.dart';
+import 'workout_analytics.dart';
+import 'workout_clock.dart';
+import 'workout_session_state.dart';
+
+class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
+  WorkoutSessionController({
+    required HrMonitorRepository hrMonitorRepository,
+    required TrainerRepository trainerRepository,
+    HrAverager hrAverager = const HrAverager(),
+    PowerAdjustmentPolicy powerAdjustmentPolicy =
+        const PowerAdjustmentPolicy(),
+    WorkoutAnalytics workoutAnalytics = const WorkoutAnalytics(),
+    WorkoutClock workoutClock = const WorkoutClock(),
+  }) : _hrMonitorRepository = hrMonitorRepository,
+       _trainerRepository = trainerRepository,
+       _hrAverager = hrAverager,
+       _powerAdjustmentPolicy = powerAdjustmentPolicy,
+       _workoutAnalytics = workoutAnalytics,
+       _workoutClock = workoutClock,
+       super(const WorkoutSessionState());
+
+  final HrMonitorRepository _hrMonitorRepository;
+  final TrainerRepository _trainerRepository;
+  final HrAverager _hrAverager;
+  final PowerAdjustmentPolicy _powerAdjustmentPolicy;
+  final WorkoutAnalytics _workoutAnalytics;
+  final WorkoutClock _workoutClock;
+
+  final List<HrSample> _hrSamples = <HrSample>[];
+  final List<PowerSample> _powerSamples = <PowerSample>[];
+
+  StreamSubscription<HrSample>? _hrSubscription;
+  StreamSubscription<int>? _powerSubscription;
+  StreamSubscription<ConnectionStatus>? _hrStatusSubscription;
+  StreamSubscription<ConnectionStatus>? _trainerStatusSubscription;
+  Timer? _controlTimer;
+  Timer? _countdownTimer;
+
+  int _adjustmentCarryNumerator = 0;
+  DateTime? _rideStart;
+  DateTime? _lastHrSampleAt;
+  bool _hadPauseOrDisconnect = false;
+  bool _summaryCaptured = false;
+
+  static const Duration _staleHrThreshold = Duration(seconds: 5);
+
+  void initialize() {
+    _hrSubscription ??= _hrMonitorRepository.hrSamples.listen(_onHrSample);
+    _powerSubscription ??= _trainerRepository.currentPower.listen(_onPower);
+    _hrStatusSubscription ??= _hrMonitorRepository.connectionStatus.listen((
+      status,
+    ) {
+      state = state.copyWith(
+        hrConnected: status == ConnectionStatus.connected,
+      );
+      _evaluatePauseState(now: DateTime.now());
+    });
+    _trainerStatusSubscription ??= _trainerRepository.connectionStatus.listen((
+      status,
+    ) {
+      state = state.copyWith(
+        trainerConnected: status == ConnectionStatus.connected,
+      );
+      _evaluatePauseState(now: DateTime.now());
+    });
+  }
+
+  void selectWorkoutType(WorkoutType type) {
+    if (state.isRunning) {
+      return;
+    }
+    state = state.copyWith(selectedWorkoutType: type, clearError: true);
+  }
+
+  Future<void> startWorkout(WorkoutConfig config) async {
+    _resetSessionData();
+    _rideStart = DateTime.now();
+
+    final initialPhase = config.workoutType == WorkoutType.zone2Assessment
+        ? WorkoutPhase.warmup
+        : WorkoutPhase.active;
+    final initialPower = config is Zone2AssessmentConfig
+        ? config.warmupPower
+        : (config as HrErgConfig).startingWatts;
+    final initialTargetHr = config is HrErgConfig ? config.targetHr : null;
+
+    state = state.copyWith(
+      activeConfig: config,
+      phase: initialPhase,
+      totalDuration: config.duration,
+      remainingDuration: config.duration,
+      currentPower: initialPower,
+      targetHr: initialTargetHr,
+      lastAdjustmentWatts: 0,
+      statusLabel: _workoutClock.labelForPhase(config.workoutType, initialPhase),
+      clearSummary: true,
+      clearError: true,
+      clearPauseReason: true,
+      clearPhaseBeforePause: true,
+    );
+
+    try {
+      await _trainerRepository.setTargetPower(initialPower);
+    } catch (error) {
+      state = state.copyWith(error: error.toString());
+      return;
+    }
+
+    if (config is HrErgConfig) {
+      _controlTimer?.cancel();
+      _controlTimer = Timer.periodic(
+        Duration(seconds: config.loopSeconds),
+        (_) => _runHrErgControlTick(),
+      );
+    }
+
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _runCountdownTick(),
+    );
+
+    _evaluatePauseState(now: DateTime.now());
+  }
+
+  Future<void> stopWorkout({bool manual = true}) async {
+    final config = state.activeConfig;
+    if (config == null) {
+      return;
+    }
+
+    _captureSummaryIfNeeded(manualStop: manual);
+
+    _controlTimer?.cancel();
+    _controlTimer = null;
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+
+    state = state.copyWith(
+      phase: WorkoutPhase.completed,
+      statusLabel: _workoutClock.labelForPhase(
+        config.workoutType,
+        WorkoutPhase.completed,
+      ),
+      clearPauseReason: true,
+      clearPhaseBeforePause: true,
+    );
+  }
+
+  Future<void> updateHrErgTargetHr(int targetHr) async {
+    final config = state.activeConfig;
+    if (config is! HrErgConfig) {
+      return;
+    }
+
+    state = state.copyWith(targetHr: targetHr, clearError: true);
+    state = state.copyWith(
+      activeConfig: HrErgConfig(
+        startingWatts: config.startingWatts,
+        targetHr: targetHr,
+        loopSeconds: config.loopSeconds,
+        duration: config.duration,
+        minPower: config.minPower,
+        maxPower: config.maxPower,
+        hrAverageWindow: config.hrAverageWindow,
+      ),
+    );
+  }
+
+  void _onHrSample(HrSample sample) {
+    _lastHrSampleAt = sample.timestamp;
+    _hrSamples.add(sample);
+    _trimSamples(now: sample.timestamp);
+
+    final config = state.activeConfig;
+    final window = config is HrErgConfig
+        ? config.hrAverageWindow
+        : const Duration(seconds: 60);
+    final averageHr = _hrAverager.average(
+      _hrSamples,
+      now: sample.timestamp,
+      window: window,
+    );
+
+    state = state.copyWith(
+      currentHr: sample.bpm,
+      averageHr: averageHr,
+      clearError: true,
+    );
+
+    _evaluatePauseState(now: sample.timestamp);
+  }
+
+  void _onPower(int watts) {
+    final now = DateTime.now();
+    _powerSamples.add(PowerSample(watts: watts, timestamp: now));
+    _trimSamples(now: now);
+    state = state.copyWith(currentPower: watts);
+  }
+
+  Future<void> _runCountdownTick() async {
+    final config = state.activeConfig;
+    final remaining = state.remainingDuration;
+    if (config == null ||
+        remaining == null ||
+        !state.isRunning ||
+        state.isPaused ||
+        state.phase == WorkoutPhase.completed) {
+      return;
+    }
+
+    final now = DateTime.now();
+    _sampleCurrentPower(now);
+    _evaluatePauseState(now: now);
+    if (state.isPaused) {
+      return;
+    }
+
+    final nextRemaining = remaining - const Duration(seconds: 1);
+    final clampedRemaining = nextRemaining.isNegative
+        ? Duration.zero
+        : nextRemaining;
+
+    state = state.copyWith(remainingDuration: clampedRemaining);
+
+    if (config.workoutType == WorkoutType.hrErg) {
+      await _handleHrErgCountdown(remaining: clampedRemaining);
+    } else if (config is Zone2AssessmentConfig) {
+      await _handleAssessmentCountdown(
+        config: config,
+        remaining: clampedRemaining,
+      );
+    }
+
+    if (clampedRemaining == Duration.zero) {
+      await stopWorkout(manual: false);
+    }
+  }
+
+  Future<void> _handleHrErgCountdown({
+    required Duration remaining,
+  }) async {
+    if (state.phase == WorkoutPhase.cooldown) {
+      return;
+    }
+
+    if (_workoutClock.shouldEnterHrErgCooldown(remaining)) {
+      _captureSummaryIfNeeded(manualStop: false);
+      state = state.copyWith(
+        phase: WorkoutPhase.cooldown,
+        targetHr: 95,
+        statusLabel: _workoutClock.labelForPhase(
+          WorkoutType.hrErg,
+          WorkoutPhase.cooldown,
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleAssessmentCountdown({
+    required Zone2AssessmentConfig config,
+    required Duration remaining,
+  }) async {
+    final elapsed = _workoutClock.elapsed(
+      totalDuration: config.duration,
+      remainingDuration: remaining,
+    );
+    final nextPhase = _workoutClock.assessmentPhase(
+      config: config,
+      elapsed: elapsed,
+    );
+    if (nextPhase == state.phase) {
+      return;
+    }
+
+    if (nextPhase == WorkoutPhase.active) {
+      await _trainerRepository.setTargetPower(config.steadyPower);
+      state = state.copyWith(
+        phase: WorkoutPhase.active,
+        statusLabel: _workoutClock.labelForPhase(
+          WorkoutType.zone2Assessment,
+          WorkoutPhase.active,
+        ),
+      );
+      return;
+    }
+
+    if (nextPhase == WorkoutPhase.cooldown) {
+      _captureSummaryIfNeeded(manualStop: false);
+      await _trainerRepository.setTargetPower(config.cooldownPower);
+      state = state.copyWith(
+        phase: WorkoutPhase.cooldown,
+        statusLabel: _workoutClock.labelForPhase(
+          WorkoutType.zone2Assessment,
+          WorkoutPhase.cooldown,
+        ),
+      );
+    }
+  }
+
+  Future<void> _runHrErgControlTick() async {
+    final config = state.activeConfig;
+    if (config is! HrErgConfig ||
+        !state.isRunning ||
+        state.isPaused ||
+        state.phase == WorkoutPhase.completed) {
+      return;
+    }
+
+    final now = DateTime.now();
+    _evaluatePauseState(now: now);
+    if (state.isPaused) {
+      return;
+    }
+
+    final avgHr = _hrAverager.average(
+      _hrSamples,
+      now: now,
+      window: config.hrAverageWindow,
+    );
+    if (avgHr == null || state.targetHr == null) {
+      _pause(PauseReason.staleHr);
+      return;
+    }
+
+    final currentPower = state.currentPower ?? config.startingWatts;
+    final result = _powerAdjustment(avgHr - state.targetHr!, config);
+    final nextPower = min(
+      config.maxPower,
+      max(config.minPower, currentPower + result.watts),
+    );
+
+    try {
+      await _trainerRepository.setTargetPower(nextPower);
+      state = state.copyWith(
+        currentPower: nextPower,
+        averageHr: avgHr,
+        lastAdjustmentWatts: result.watts,
+        clearError: true,
+      );
+    } catch (error) {
+      state = state.copyWith(error: error.toString());
+    }
+  }
+
+  PowerAdjustmentResult _powerAdjustment(double delta, HrErgConfig config) {
+    final result = _powerAdjustmentPolicy.adjustmentForLoop(
+      delta: delta,
+      loopSeconds: config.loopSeconds,
+      carryNumerator: _adjustmentCarryNumerator,
+    );
+    _adjustmentCarryNumerator = result.nextCarryNumerator;
+    return result;
+  }
+
+  void _evaluatePauseState({required DateTime now}) {
+    if (!state.isRunning || state.phase == WorkoutPhase.completed) {
+      return;
+    }
+
+    final nextReason = _pauseReason(now);
+    if (nextReason != null) {
+      _pause(nextReason);
+      return;
+    }
+
+    if (state.isPaused && state.phaseBeforePause != null) {
+      final resumePhase = state.phaseBeforePause!;
+      final config = state.activeConfig;
+      if (config == null) {
+        return;
+      }
+      state = state.copyWith(
+        phase: resumePhase,
+        statusLabel: _workoutClock.labelForPhase(config.workoutType, resumePhase),
+        clearPauseReason: true,
+        clearPhaseBeforePause: true,
+      );
+    }
+  }
+
+  PauseReason? _pauseReason(DateTime now) {
+    if (!state.hrConnected) {
+      return PauseReason.hrDisconnected;
+    }
+    if (!state.trainerConnected) {
+      return PauseReason.trainerDisconnected;
+    }
+    if (_lastHrSampleAt == null ||
+        now.difference(_lastHrSampleAt!) > _staleHrThreshold) {
+      return PauseReason.staleHr;
+    }
+    return null;
+  }
+
+  void _pause(PauseReason reason) {
+    if (state.isPaused && state.pauseReason == reason) {
+      return;
+    }
+
+    _hadPauseOrDisconnect = true;
+    state = state.copyWith(
+      phase: WorkoutPhase.paused,
+      pauseReason: reason,
+      phaseBeforePause: state.isPaused ? state.phaseBeforePause : state.phase,
+      statusLabel: _pauseLabel(reason),
+    );
+  }
+
+  String _pauseLabel(PauseReason reason) {
+    switch (reason) {
+      case PauseReason.hrDisconnected:
+        return 'Paused: HR disconnected';
+      case PauseReason.trainerDisconnected:
+        return 'Paused: trainer disconnected';
+      case PauseReason.staleHr:
+        return 'Paused: waiting for fresh HR';
+    }
+  }
+
+  void _captureSummaryIfNeeded({required bool manualStop}) {
+    if (_summaryCaptured) {
+      return;
+    }
+    final config = state.activeConfig;
+    final rideStart = _rideStart;
+    if (config == null || rideStart == null) {
+      return;
+    }
+
+    final summary = config is HrErgConfig
+        ? _workoutAnalytics.summarizeHrErg(
+            hrSamples: _hrSamples,
+            powerSamples: _powerSamples,
+            rideStart: rideStart,
+            analysisEnd: DateTime.now(),
+          )
+        : _workoutAnalytics.summarizeAssessment(
+            config: config as Zone2AssessmentConfig,
+            hrSamples: _hrSamples,
+            powerSamples: _powerSamples,
+            rideStart: rideStart,
+            completed: !manualStop,
+            hadPauseOrDisconnect: _hadPauseOrDisconnect,
+          );
+
+    _summaryCaptured = true;
+    state = state.copyWith(summary: summary);
+  }
+
+  void _sampleCurrentPower(DateTime now) {
+    final power = state.currentPower;
+    if (power == null) {
+      return;
+    }
+    _powerSamples.add(PowerSample(watts: power, timestamp: now));
+    _trimSamples(now: now);
+  }
+
+  void _trimSamples({required DateTime now}) {
+    final cutoff = now.subtract(const Duration(hours: 2));
+    _hrSamples.removeWhere((sample) => sample.timestamp.isBefore(cutoff));
+    _powerSamples.removeWhere((sample) => sample.timestamp.isBefore(cutoff));
+  }
+
+  void _resetSessionData() {
+    _controlTimer?.cancel();
+    _countdownTimer?.cancel();
+    _adjustmentCarryNumerator = 0;
+    _hrSamples.clear();
+    _powerSamples.clear();
+    _rideStart = null;
+    _lastHrSampleAt = null;
+    _hadPauseOrDisconnect = false;
+    _summaryCaptured = false;
+  }
+
+  @override
+  void dispose() {
+    _controlTimer?.cancel();
+    _countdownTimer?.cancel();
+    _hrSubscription?.cancel();
+    _powerSubscription?.cancel();
+    _hrStatusSubscription?.cancel();
+    _trainerStatusSubscription?.cancel();
+    super.dispose();
+  }
+}

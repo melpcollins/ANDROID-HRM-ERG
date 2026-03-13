@@ -1,14 +1,15 @@
 # Android HRM ERG
 
-Heart-rate-driven ERG control app for Android (Flutter).  
-The app connects to a Bluetooth HR monitor and Bluetooth trainer, then adjusts trainer power to hold a target heart rate.
+Physiology-driven indoor cycling app for Android (Flutter).  
+The app connects to a Bluetooth HR monitor and Bluetooth trainer, then supports both heart-rate-controlled ERG rides and fixed-protocol Zone 2 assessment rides.
 
 ## What It Does
 - Connects to HRM + trainer over BLE
 - Saves selected devices and attempts reconnect on startup
-- Runs ERG control loop using a 10-second HR average window
-- Uses a configurable loop interval (seconds)
-- Live metrics: HR average, target HR, power, drift
+- Supports two workout modes: `HR-ERG` and `Zone 2 Assessment`
+- Runs HR-ERG control using a 60-second HR average window and 20-second loop
+- Pauses workouts automatically on stale HR or device disconnect until data is valid again
+- Shows live session status plus post-ride power-fade, aerobic-drift, and Zone 2 guidance
 - Keeps screen awake during long rides
 
 ## Prerequisites
@@ -88,16 +89,16 @@ If `adb` is not on `PATH`, use:
 ## Typical Session Flow
 1. Open app, let auto-reconnect try saved devices (up to 3 times).
 2. If needed, use `Scan` / `Reconnect saved` for HRM and trainer.
-3. In `ERG Control`, set `Starting Watts`, `Target Heart Rate`, and `Loop Interval (seconds)`.
-4. Tap `Start`.
-5. Monitor live metrics during ride.
+3. Choose `HR-ERG` or `Zone 2 Assessment`.
+4. Enter the workout-specific setup values and tap `Start`.
+5. Monitor live status during the ride, then review the summary during cooldown or after completion.
 
 ## Project Structure
 - `lib/src/infrastructure/ble`: BLE repositories (HRM + trainer)
 - `lib/src/application/connect`: connect/reconnect state logic
-- `lib/src/application/session`: ERG session + control loop logic
+- `lib/src/application/session`: shared workout session engine, analytics, and control logic
 - `lib/src/app.dart`: main UI
-- `use cases/`: scenario docs for feature-level discussions
+- `use-cases/`: scenario docs for feature-level discussions
 
 ## Troubleshooting
 - Device not found: ensure BLE device is awake and advertising, keep phone close, then re-run `Scan`.

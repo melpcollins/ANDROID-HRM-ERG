@@ -66,6 +66,7 @@ class FakeTrainerRepository implements TrainerRepository {
       StreamController<int>.broadcast();
 
   final List<int> targetPowerWrites = <int>[];
+  int currentWatts = 0;
 
   @override
   Stream<ConnectionStatus> get connectionStatus =>
@@ -75,6 +76,7 @@ class FakeTrainerRepository implements TrainerRepository {
   Stream<int> get currentPower => _currentPowerController.stream;
 
   void emitPower(int watts) {
+    currentWatts = watts;
     _currentPowerController.add(watts);
   }
 
@@ -105,6 +107,8 @@ class FakeTrainerRepository implements TrainerRepository {
 
   @override
   Future<void> setTargetPower(int watts) async {
+    currentWatts = watts;
     targetPowerWrites.add(watts);
+    _currentPowerController.add(watts);
   }
 }
