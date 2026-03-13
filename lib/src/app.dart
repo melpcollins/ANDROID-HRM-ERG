@@ -17,7 +17,7 @@ class HrmErgApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'HRM ERG',
+      title: 'Cycling HR ERG',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
@@ -138,7 +138,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     });
 
     return Scaffold(
-      appBar: AppBar(title: const Text('HRM ERG')),
+      appBar: AppBar(title: const Text('Cycling HR ERG')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
