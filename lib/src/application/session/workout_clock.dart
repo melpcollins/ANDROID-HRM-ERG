@@ -19,10 +19,28 @@ class WorkoutClock {
     if (elapsed >= config.duration) {
       return WorkoutPhase.completed;
     }
-    if (elapsed >= const Duration(minutes: 85)) {
+    if (elapsed >=
+        Zone2AssessmentConfig.warmupDuration +
+            Zone2AssessmentConfig.steadyDuration) {
       return WorkoutPhase.cooldown;
     }
-    if (elapsed >= const Duration(minutes: 10)) {
+    if (elapsed >= Zone2AssessmentConfig.warmupDuration) {
+      return WorkoutPhase.active;
+    }
+    return WorkoutPhase.warmup;
+  }
+
+  WorkoutPhase powerErgPhase({
+    required PowerErgConfig config,
+    required Duration elapsed,
+  }) {
+    if (elapsed >= config.duration) {
+      return WorkoutPhase.completed;
+    }
+    if (elapsed >= PowerErgConfig.warmupDuration + config.activeDuration) {
+      return WorkoutPhase.cooldown;
+    }
+    if (elapsed >= PowerErgConfig.warmupDuration) {
       return WorkoutPhase.active;
     }
     return WorkoutPhase.warmup;
@@ -37,9 +55,15 @@ class WorkoutClock {
       case WorkoutPhase.idle:
         return 'Idle';
       case WorkoutPhase.warmup:
-        return type == WorkoutType.zone2Assessment ? 'Warm-up' : 'Warm-up';
+        return 'Warm-up';
       case WorkoutPhase.active:
-        return type == WorkoutType.zone2Assessment ? 'Assessment' : 'Active';
+        if (type == WorkoutType.zone2Assessment) {
+          return 'Assessment';
+        }
+        if (type == WorkoutType.powerErg) {
+          return 'Power Block';
+        }
+        return 'Active';
       case WorkoutPhase.cooldown:
         return 'Cooldown';
       case WorkoutPhase.paused:

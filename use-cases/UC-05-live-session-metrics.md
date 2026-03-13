@@ -5,7 +5,7 @@ Give the rider clear live control status and a reliable post-ride summary.
 
 ## Metrics Shown During Active Session
 - `Heart Rate`
-- `Heart Rate (avg 60s)`
+- `Heart Rate (avg 10s)`
 - `Power`
 - `Countdown (HH:MM:SS)`
 - `Target HR` for `HR-ERG`

@@ -7,7 +7,7 @@ The app connects to a Bluetooth HR monitor and Bluetooth trainer, then supports 
 - Connects to HRM + trainer over BLE
 - Saves selected devices and attempts reconnect on startup
 - Supports two workout modes: `HR-ERG` and `Zone 2 Assessment`
-- Runs HR-ERG control using a 60-second HR average window and 20-second loop
+- Runs HR-ERG control using a 10-second HR average window and 5-second loop
 - Pauses workouts automatically on stale HR or device disconnect until data is valid again
 - Shows live session status plus post-ride power-fade, aerobic-drift, and Zone 2 guidance
 - Keeps screen awake during long rides
@@ -49,6 +49,24 @@ Non-resident mode (install + launch, then return terminal):
 ```powershell
 flutter run -d <device_id> --no-resident
 ```
+
+## Emulator-First Debugging
+
+For UI and workout-logic bugs, use the Android emulator with mock devices instead of the phone:
+
+```powershell
+flutter emulators --launch Medium_Phone_API_36.1
+flutter devices
+flutter run -d <emulator_id> --dart-define=USE_MOCK_DEVICES=true
+```
+
+In mock mode the app shows a `Mock Controls` panel that can:
+- connect/disconnect mock HR and trainer devices
+- emit steady HR
+- run `Steady`, `Slow Rise`, and `Dropout` HR scenarios
+- reconnect the trainer and reset mock state
+
+Use the physical phone for real BLE issues such as FTMS quirks, hardware reconnect behavior, or scan reliability with actual peripherals.
 
 ## Test And Lint
 

@@ -1,1 +1,1 @@
-enum WorkoutType { hrErg, zone2Assessment }
+enum WorkoutType { hrErg, powerErg, zone2Assessment }

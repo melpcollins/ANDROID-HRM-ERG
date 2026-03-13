@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'application/session/workout_session_controller.dart';
+import 'application/session/workout_session_state.dart';
 import 'app/providers.dart';
+import 'debug/mock_workout_debug_controller.dart';
 import 'domain/models/ble_device_info.dart';
 import 'domain/models/connection_status.dart';
 import 'domain/models/workout_config.dart';
@@ -36,102 +39,114 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
   late final TextEditingController _targetHrController;
   late final TextEditingController _durationHoursController;
   late final TextEditingController _durationMinutesController;
+  late final TextEditingController _powerErgPowerController;
+  late final TextEditingController _powerErgMaxHrController;
+  late final TextEditingController _powerErgDurationHoursController;
+  late final TextEditingController _powerErgDurationMinutesController;
   late final TextEditingController _assessmentPowerController;
+  late final TextEditingController _mockSteadyHrController;
+  bool _showHrmDetails = true;
+  bool _showTrainerDetails = true;
+  bool _showWorkoutTypeOptions = true;
 
   @override
   void initState() {
     super.initState();
-    _startingWattsController = TextEditingController(text: '140');
-    _targetHrController = TextEditingController(text: '135');
+    _startingWattsController = TextEditingController(text: '70');
+    _targetHrController = TextEditingController(text: '112');
     _durationHoursController = TextEditingController(text: '1');
     _durationMinutesController = TextEditingController(text: '0');
+    _powerErgPowerController = TextEditingController(text: '180');
+    _powerErgMaxHrController = TextEditingController(text: '150');
+    _powerErgDurationHoursController = TextEditingController(text: '1');
+    _powerErgDurationMinutesController = TextEditingController(text: '0');
     _assessmentPowerController = TextEditingController(text: '180');
+    _mockSteadyHrController = TextEditingController(text: '135');
+    _startingWattsController.addListener(_handleStartingWattsChanged);
+    _targetHrController.addListener(_handleTargetHrChanged);
+    _loadSavedHrErgDefaults();
   }
 
   @override
   void dispose() {
+    _startingWattsController.removeListener(_handleStartingWattsChanged);
+    _targetHrController.removeListener(_handleTargetHrChanged);
     _startingWattsController.dispose();
     _targetHrController.dispose();
     _durationHoursController.dispose();
     _durationMinutesController.dispose();
+    _powerErgPowerController.dispose();
+    _powerErgMaxHrController.dispose();
+    _powerErgDurationHoursController.dispose();
+    _powerErgDurationMinutesController.dispose();
     _assessmentPowerController.dispose();
+    _mockSteadyHrController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final debugConfig = ref.watch(appDebugConfigProvider);
     final connectState = ref.watch(connectSetupControllerProvider);
     final connectController = ref.read(connectSetupControllerProvider.notifier);
     final sessionState = ref.watch(workoutSessionControllerProvider);
     final sessionController = ref.read(workoutSessionControllerProvider.notifier);
+    MockWorkoutDebugState? mockState;
+    MockWorkoutDebugController? mockController;
+    if (debugConfig.useMockDevices) {
+      mockState = ref.watch(mockWorkoutDebugControllerProvider);
+      mockController = ref.read(mockWorkoutDebugControllerProvider.notifier);
+    }
 
     final selectedType = sessionState.selectedWorkoutType;
-    final canStart =
-        connectState.hrStatus == ConnectionStatus.connected &&
-        connectState.trainerStatus == ConnectionStatus.connected &&
-        !sessionState.isRunning;
+    final canStart = _canStartWorkout(
+      selectedType: selectedType,
+      connectState: connectState,
+      isRunning: sessionState.isRunning,
+    );
+
+    ref.listen(connectSetupControllerProvider, (previous, next) {
+      if (previous?.hrStatus != ConnectionStatus.connected &&
+          next.hrStatus == ConnectionStatus.connected &&
+          _showHrmDetails) {
+        setState(() {
+          _showHrmDetails = false;
+        });
+      }
+
+      if (previous?.trainerStatus != ConnectionStatus.connected &&
+          next.trainerStatus == ConnectionStatus.connected &&
+          _showTrainerDetails) {
+        setState(() {
+          _showTrainerDetails = false;
+        });
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(title: const Text('HRM ERG')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Workout Mode',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  SegmentedButton<WorkoutType>(
-                    segments: const [
-                      ButtonSegment(
-                        value: WorkoutType.hrErg,
-                        label: Text('HR-ERG'),
-                      ),
-                      ButtonSegment(
-                        value: WorkoutType.zone2Assessment,
-                        label: Text('Zone 2 Assessment'),
-                      ),
-                    ],
-                    selected: {selectedType},
-                    onSelectionChanged: sessionState.isRunning
-                        ? null
-                        : (selection) {
-                            sessionController.selectWorkoutType(selection.first);
-                          },
-                  ),
-                ],
-              ),
+          if (debugConfig.useMockDevices) ...[
+            _buildMockControlsCard(
+              context,
+              mockState: mockState!,
+              mockController: mockController!,
             ),
+            const SizedBox(height: 16),
+          ],
+          _buildDeviceCards(
+            context,
+            connectState: connectState,
+            connectController: connectController,
           ),
           const SizedBox(height: 16),
-          _DeviceSection(
-            title: 'HR Monitor',
-            status: connectState.hrStatus,
-            selectedDeviceId: connectState.selectedHrId,
-            devices: connectState.hrDevices,
-            isScanning: connectState.scanningHr,
-            error: connectState.hrError,
-            onScan: connectController.scanHrMonitors,
-            onReconnectSaved: connectController.reconnectHrMonitor,
-            onConnect: connectController.connectHrMonitor,
-          ),
-          const SizedBox(height: 16),
-          _DeviceSection(
-            title: 'Trainer',
-            status: connectState.trainerStatus,
-            selectedDeviceId: connectState.selectedTrainerId,
-            devices: connectState.trainerDevices,
-            isScanning: connectState.scanningTrainer,
-            error: connectState.trainerError,
-            onScan: connectController.scanTrainers,
-            onReconnectSaved: connectController.reconnectTrainer,
-            onConnect: connectController.connectTrainer,
+          _buildWorkoutTypeCard(
+            context,
+            selectedType: selectedType,
+            sessionState: sessionState,
+            sessionController: sessionController,
           ),
           const SizedBox(height: 16),
           _buildSetupCard(
@@ -148,12 +163,195 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     );
   }
 
+  bool _canStartWorkout({
+    required WorkoutType selectedType,
+    required connectState,
+    required bool isRunning,
+  }) {
+    if (isRunning) {
+      return false;
+    }
+    return connectState.hrStatus == ConnectionStatus.connected &&
+        connectState.trainerStatus == ConnectionStatus.connected;
+  }
+
+  Widget _buildWorkoutTypeCard(
+    BuildContext context, {
+    required WorkoutType selectedType,
+    required WorkoutSessionState sessionState,
+    required sessionController,
+  }) {
+    if (!_showWorkoutTypeOptions || sessionState.isRunning) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            key: const ValueKey('selected-workout-type-row'),
+            children: [
+              Expanded(
+                child: Text(
+                  _workoutTypeLabel(selectedType),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (!sessionState.isRunning)
+                OutlinedButton(
+                  onPressed: () {
+                    setState(() {
+                      _showWorkoutTypeOptions = true;
+                    });
+                  },
+                  child: const Text('Change'),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          key: const ValueKey('workout-type-options'),
+          children: [
+            _WorkoutTypeOption(
+              label: 'HR-ERG',
+              selected: selectedType == WorkoutType.hrErg,
+              onTap: () => _selectWorkoutType(
+                sessionController,
+                WorkoutType.hrErg,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _WorkoutTypeOption(
+              label: 'Power-ERG',
+              selected: selectedType == WorkoutType.powerErg,
+              onTap: () => _selectWorkoutType(
+                sessionController,
+                WorkoutType.powerErg,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _WorkoutTypeOption(
+              label: 'Zone 2 Assessment',
+              selected: selectedType == WorkoutType.zone2Assessment,
+              onTap: () => _selectWorkoutType(
+                sessionController,
+                WorkoutType.zone2Assessment,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _selectWorkoutType(
+    WorkoutSessionController sessionController,
+    WorkoutType type,
+  ) {
+    sessionController.selectWorkoutType(type);
+    setState(() {
+      _showWorkoutTypeOptions = false;
+    });
+  }
+
+  String _workoutTypeLabel(WorkoutType type) {
+    switch (type) {
+      case WorkoutType.hrErg:
+        return 'HR-ERG';
+      case WorkoutType.powerErg:
+        return 'Power-ERG';
+      case WorkoutType.zone2Assessment:
+        return 'Zone 2 Assessment';
+    }
+  }
+
+  Widget _buildDeviceCards(
+    BuildContext context, {
+    required connectState,
+    required connectController,
+  }) {
+    final hrSection = _DeviceSection(
+      title: 'HR Monitor',
+      status: connectState.hrStatus,
+      selectedDeviceId: connectState.selectedHrId,
+      devices: connectState.hrDevices,
+      isScanning: connectState.scanningHr,
+      error: connectState.hrError,
+      isExpanded: _showHrmDetails,
+      onToggleExpanded: () {
+        setState(() {
+          _showHrmDetails = !_showHrmDetails;
+        });
+      },
+      onScan: connectController.scanHrMonitors,
+      onReconnectSaved: connectController.reconnectHrMonitor,
+      onConnect: connectController.connectHrMonitor,
+      compact:
+          connectState.hrStatus == ConnectionStatus.connected &&
+          connectState.trainerStatus == ConnectionStatus.connected &&
+          !_showHrmDetails &&
+          !_showTrainerDetails,
+    );
+
+    final trainerSection = _DeviceSection(
+      title: 'Trainer',
+      status: connectState.trainerStatus,
+      selectedDeviceId: connectState.selectedTrainerId,
+      devices: connectState.trainerDevices,
+      isScanning: connectState.scanningTrainer,
+      error: connectState.trainerError,
+      isExpanded: _showTrainerDetails,
+      onToggleExpanded: () {
+        setState(() {
+          _showTrainerDetails = !_showTrainerDetails;
+        });
+      },
+      onScan: connectController.scanTrainers,
+      onReconnectSaved: connectController.reconnectTrainer,
+      onConnect: connectController.connectTrainer,
+      compact:
+          connectState.hrStatus == ConnectionStatus.connected &&
+          connectState.trainerStatus == ConnectionStatus.connected &&
+          !_showHrmDetails &&
+          !_showTrainerDetails,
+    );
+
+    final useCompactRow =
+        connectState.hrStatus == ConnectionStatus.connected &&
+        connectState.trainerStatus == ConnectionStatus.connected &&
+        !_showHrmDetails &&
+        !_showTrainerDetails;
+
+    if (useCompactRow) {
+      return Row(
+        key: const ValueKey('compact-device-row'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: hrSection),
+          const SizedBox(width: 12),
+          Expanded(child: trainerSection),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        hrSection,
+        const SizedBox(height: 16),
+        trainerSection,
+      ],
+    );
+  }
+
   Widget _buildSetupCard(
     BuildContext context, {
     required WorkoutType selectedType,
     required bool canStart,
-    required dynamic sessionState,
-    required dynamic sessionController,
+    required WorkoutSessionState sessionState,
+    required sessionController,
   }) {
     return Card(
       child: Padding(
@@ -226,7 +424,55 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                 ],
               ),
               const SizedBox(height: 8),
-              const Text('Control defaults: 60s HR average, 20s loop.'),
+              const Text('Control defaults: 10s HR average, 5s loop.'),
+            ] else if (selectedType == WorkoutType.powerErg) ...[
+              TextField(
+                controller: _powerErgPowerController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Target Power',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _powerErgMaxHrController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Max Heart Rate',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _powerErgDurationHoursController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Duration Hours',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _powerErgDurationMinutesController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Duration Minutes',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Protocol: 10 min ramp from 50% to 100%, then duration at 100%, 5 min at 60%. If HR rises above Max Heart Rate, power decreases by 5 W/min until HR settles back under the cap.',
+              ),
             ] else ...[
               TextField(
                 controller: _assessmentPowerController,
@@ -238,7 +484,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Fixed protocol: 10 min at 80%, 75 min at 100%, 5 min at 60%.',
+                'Fixed protocol: 10 min ramp from 50% to 100%, 75 min at 100%, 5 min at 60%.',
               ),
             ],
             if (sessionState.error != null) ...[
@@ -264,8 +510,8 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
 
   Widget _buildLiveCard(
     BuildContext context,
-    dynamic sessionState,
-    dynamic sessionController,
+    WorkoutSessionState sessionState,
+    sessionController,
   ) {
     if (!sessionState.isRunning &&
         !sessionState.isCompleted &&
@@ -296,7 +542,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                   : '${sessionState.currentHr} bpm',
             ),
             _MetricRow(
-              label: 'HR Avg (60s)',
+              label: 'HR Avg (10s)',
               value: sessionState.averageHr == null
                   ? '--'
                   : '${sessionState.averageHr!.toStringAsFixed(1)} bpm',
@@ -309,7 +555,9 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
             ),
             if (sessionState.targetHr != null)
               _MetricRow(
-                label: 'Target HR',
+                label: sessionState.selectedWorkoutType == WorkoutType.powerErg
+                    ? 'Max HR'
+                    : 'Target HR',
                 value: '${sessionState.targetHr} bpm',
               ),
             if (sessionState.selectedWorkoutType == WorkoutType.hrErg &&
@@ -361,6 +609,112 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     );
   }
 
+  Widget _buildMockControlsCard(
+    BuildContext context, {
+    required MockWorkoutDebugState mockState,
+    required MockWorkoutDebugController mockController,
+  }) {
+    return Card(
+      color: Colors.orange.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Mock Controls',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Debug-only controls for emulator runs with USE_MOCK_DEVICES=true.',
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: mockController.connectHrMonitor,
+                  child: const Text('Connect HR'),
+                ),
+                OutlinedButton(
+                  onPressed: mockController.disconnectHrMonitor,
+                  child: const Text('Disconnect HR'),
+                ),
+                OutlinedButton(
+                  onPressed: mockController.connectTrainer,
+                  child: const Text('Connect Trainer'),
+                ),
+                OutlinedButton(
+                  onPressed: mockController.disconnectTrainer,
+                  child: const Text('Disconnect Trainer'),
+                ),
+                OutlinedButton(
+                  onPressed: mockController.reconnectTrainer,
+                  child: const Text('Reconnect Trainer'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _mockSteadyHrController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Mock Steady HR',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (_) => _applyMockSteadyHr(mockController),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton(
+                  onPressed: () {
+                    _applyMockSteadyHr(mockController);
+                    mockController.emitSteadyHrNow();
+                  },
+                  child: const Text('Emit HR Now'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    _applyMockSteadyHr(mockController);
+                    mockController.startSteadyScenario();
+                  },
+                  child: const Text('Steady'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    _applyMockSteadyHr(mockController);
+                    mockController.startSlowRiseScenario();
+                  },
+                  child: const Text('Slow Rise'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    _applyMockSteadyHr(mockController);
+                    mockController.startDropoutScenario();
+                  },
+                  child: const Text('Dropout'),
+                ),
+                OutlinedButton(
+                  onPressed: mockController.reset,
+                  child: const Text('Reset'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('Scenario: ${_scenarioLabel(mockState.scenario)}'),
+            const SizedBox(height: 4),
+            Text(mockState.statusMessage),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _startWorkout(WorkoutType selectedType) async {
     final sessionController = ref.read(workoutSessionControllerProvider.notifier);
     if (selectedType == WorkoutType.hrErg) {
@@ -387,10 +741,53 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
         HrErgConfig(
           startingWatts: startingWatts,
           targetHr: targetHr,
-          loopSeconds: 20,
+          loopSeconds: 5,
           duration: Duration(hours: durationHours, minutes: durationMinutes),
         ),
       );
+      setState(() {
+        _showWorkoutTypeOptions = false;
+      });
+      return;
+    }
+
+    if (selectedType == WorkoutType.powerErg) {
+      final targetPower = int.tryParse(_powerErgPowerController.text.trim());
+      final maxHr = int.tryParse(_powerErgMaxHrController.text.trim());
+      final durationHours = int.tryParse(
+        _powerErgDurationHoursController.text.trim(),
+      );
+      final durationMinutes = int.tryParse(
+        _powerErgDurationMinutesController.text.trim(),
+      );
+
+      if (targetPower == null ||
+          maxHr == null ||
+          durationHours == null ||
+          durationMinutes == null ||
+          targetPower <= 0 ||
+          maxHr <= 0 ||
+          durationHours < 0 ||
+          durationMinutes < 0 ||
+          durationMinutes > 59 ||
+          (durationHours == 0 && durationMinutes == 0)) {
+        _showInvalidInput();
+        return;
+      }
+
+      await sessionController.startWorkout(
+        PowerErgConfig(
+          targetPower: targetPower,
+          maxHr: maxHr,
+          activeDuration: Duration(
+            hours: durationHours,
+            minutes: durationMinutes,
+          ),
+        ),
+      );
+      setState(() {
+        _showWorkoutTypeOptions = false;
+      });
       return;
     }
 
@@ -403,12 +800,79 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     await sessionController.startWorkout(
       Zone2AssessmentConfig(assessmentPower: assessmentPower),
     );
+    setState(() {
+      _showWorkoutTypeOptions = false;
+    });
   }
 
   void _showInvalidInput() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Please enter valid workout values.')),
     );
+  }
+
+  Future<void> _loadSavedHrErgDefaults() async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    final savedStartingWatts = await store.getHrErgStartingWatts();
+    final savedTargetHr = await store.getHrErgTargetHr();
+    if (!mounted) {
+      return;
+    }
+
+    if (savedStartingWatts != null && savedStartingWatts > 0) {
+      _startingWattsController.text = '$savedStartingWatts';
+    }
+    if (savedTargetHr != null && savedTargetHr > 0) {
+      _targetHrController.text = '$savedTargetHr';
+    }
+  }
+
+  void _handleStartingWattsChanged() {
+    final watts = int.tryParse(_startingWattsController.text.trim());
+    if (watts == null || watts <= 0) {
+      return;
+    }
+    _saveStartingWatts(watts);
+  }
+
+  void _handleTargetHrChanged() {
+    final bpm = int.tryParse(_targetHrController.text.trim());
+    if (bpm == null || bpm <= 0) {
+      return;
+    }
+    _saveTargetHr(bpm);
+  }
+
+  Future<void> _saveStartingWatts(int watts) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.saveHrErgStartingWatts(watts);
+  }
+
+  Future<void> _saveTargetHr(int bpm) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.saveHrErgTargetHr(bpm);
+  }
+
+  void _applyMockSteadyHr(MockWorkoutDebugController mockController) {
+    final bpm = int.tryParse(_mockSteadyHrController.text.trim());
+    if (bpm == null || bpm <= 0) {
+      _showInvalidInput();
+      return;
+    }
+    mockController.setSteadyHr(bpm);
+  }
+
+  String _scenarioLabel(MockHrScenario scenario) {
+    switch (scenario) {
+      case MockHrScenario.idle:
+        return 'Idle';
+      case MockHrScenario.steady:
+        return 'Steady';
+      case MockHrScenario.slowRise:
+        return 'Slow rise';
+      case MockHrScenario.dropout:
+        return 'Dropout';
+    }
   }
 
   String _formatDuration(Duration? duration) {
@@ -421,6 +885,58 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     final minutes = ((totalSeconds % 3600) ~/ 60).toString().padLeft(2, '0');
     final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
     return '$hours:$minutes:$seconds';
+  }
+}
+
+class _WorkoutTypeOption extends StatelessWidget {
+  const _WorkoutTypeOption({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? Colors.teal.shade50 : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: selected
+                  ? Colors.teal
+                  : Theme.of(context).colorScheme.outlineVariant,
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+              if (selected)
+                const Icon(Icons.check_circle, color: Colors.teal)
+              else
+                const Icon(Icons.chevron_right),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -479,9 +995,12 @@ class _DeviceSection extends StatelessWidget {
     required this.devices,
     required this.isScanning,
     required this.error,
+    required this.isExpanded,
+    required this.onToggleExpanded,
     required this.onScan,
     required this.onReconnectSaved,
     required this.onConnect,
+    this.compact = false,
   });
 
   final String title;
@@ -490,80 +1009,101 @@ class _DeviceSection extends StatelessWidget {
   final List<BleDeviceInfo> devices;
   final bool isScanning;
   final String? error;
+  final bool isExpanded;
+  final VoidCallback onToggleExpanded;
   final Future<void> Function() onScan;
   final Future<void> Function() onReconnectSaved;
   final Future<void> Function(String deviceId) onConnect;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final isConnected = status == ConnectionStatus.connected;
+    final showDetails = !isConnected || isExpanded;
+    final compactChipLabel = title == 'HR Monitor'
+        ? 'HR-Connected'
+        : 'TR-Connected';
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(compact ? 10 : 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium,
+                if (!compact)
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                if (compact) const Spacer(),
+                InkWell(
+                  onTap: onToggleExpanded,
+                  borderRadius: BorderRadius.circular(999),
+                  child: Chip(
+                    label: Text(
+                      compact && isConnected
+                          ? compactChipLabel
+                          : isConnected
+                          ? 'Connected'
+                          : 'Disconnected',
+                    ),
+                    backgroundColor: isConnected
+                        ? Colors.green.shade100
+                        : Colors.red.shade100,
                   ),
                 ),
-                Chip(
-                  label: Text(isConnected ? 'Connected' : 'Disconnected'),
-                  backgroundColor: isConnected
-                      ? Colors.green.shade100
-                      : Colors.red.shade100,
-                ),
               ],
             ),
-            if (selectedDeviceId != null) ...[
+            if (showDetails) ...[
               const SizedBox(height: 8),
-              Text('Saved device: $selectedDeviceId'),
-            ],
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                OutlinedButton(
-                  onPressed: isScanning ? null : () => onScan(),
-                  child: Text(isScanning ? 'Scanning...' : 'Scan'),
-                ),
-                FilledButton(
-                  onPressed: selectedDeviceId == null
-                      ? null
-                      : () => onReconnectSaved(),
-                  child: const Text('Reconnect saved'),
+              if (selectedDeviceId != null) ...[
+                Text('Saved device: $selectedDeviceId'),
+                const SizedBox(height: 8),
+              ],
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: isScanning ? null : () => onScan(),
+                    child: Text(isScanning ? 'Scanning...' : 'Scan'),
+                  ),
+                  FilledButton(
+                    onPressed: selectedDeviceId == null
+                        ? null
+                        : () => onReconnectSaved(),
+                    child: const Text('Reconnect saved'),
+                  ),
+                ],
+              ),
+              if (error != null && error!.trim().isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ],
-            ),
-            if (error != null && error!.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text(
-                error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-            const SizedBox(height: 8),
-            if (devices.isEmpty)
-              const Text('No devices yet. Tap Scan.')
-            else
-              ...devices.map(
-                (device) => ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(device.name),
-                  subtitle: Text(device.id),
-                  trailing: selectedDeviceId == device.id
-                      ? const Icon(Icons.check_circle, color: Colors.green)
-                      : TextButton(
-                          onPressed: () => onConnect(device.id),
-                          child: const Text('Connect'),
-                        ),
+              if (devices.isEmpty)
+                const Text('No devices yet. Tap Scan.')
+              else
+                ...devices.map(
+                  (device) => ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(device.name),
+                    subtitle: Text(device.id),
+                    trailing: selectedDeviceId == device.id
+                        ? const Icon(Icons.check_circle, color: Colors.green)
+                        : TextButton(
+                            onPressed: () => onConnect(device.id),
+                            child: const Text('Connect'),
+                          ),
+                  ),
                 ),
-              ),
+            ],
           ],
         ),
       ),

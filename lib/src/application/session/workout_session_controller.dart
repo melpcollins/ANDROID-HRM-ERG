@@ -27,12 +27,14 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
         const PowerAdjustmentPolicy(),
     WorkoutAnalytics workoutAnalytics = const WorkoutAnalytics(),
     WorkoutClock workoutClock = const WorkoutClock(),
+    DateTime Function()? nowProvider,
   }) : _hrMonitorRepository = hrMonitorRepository,
        _trainerRepository = trainerRepository,
        _hrAverager = hrAverager,
        _powerAdjustmentPolicy = powerAdjustmentPolicy,
        _workoutAnalytics = workoutAnalytics,
        _workoutClock = workoutClock,
+       _now = nowProvider ?? DateTime.now,
        super(const WorkoutSessionState());
 
   final HrMonitorRepository _hrMonitorRepository;
@@ -41,6 +43,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
   final PowerAdjustmentPolicy _powerAdjustmentPolicy;
   final WorkoutAnalytics _workoutAnalytics;
   final WorkoutClock _workoutClock;
+  final DateTime Function() _now;
 
   final List<HrSample> _hrSamples = <HrSample>[];
   final List<PowerSample> _powerSamples = <PowerSample>[];
@@ -69,7 +72,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       state = state.copyWith(
         hrConnected: status == ConnectionStatus.connected,
       );
-      _evaluatePauseState(now: DateTime.now());
+      _evaluatePauseState(now: _now());
     });
     _trainerStatusSubscription ??= _trainerRepository.connectionStatus.listen((
       status,
@@ -77,7 +80,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       state = state.copyWith(
         trainerConnected: status == ConnectionStatus.connected,
       );
-      _evaluatePauseState(now: DateTime.now());
+      _evaluatePauseState(now: _now());
     });
   }
 
@@ -90,15 +93,29 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
 
   Future<void> startWorkout(WorkoutConfig config) async {
     _resetSessionData();
-    _rideStart = DateTime.now();
+    _rideStart = _now();
 
-    final initialPhase = config.workoutType == WorkoutType.zone2Assessment
+    final initialPhase =
+        config.workoutType == WorkoutType.zone2Assessment ||
+            config.workoutType == WorkoutType.powerErg
         ? WorkoutPhase.warmup
         : WorkoutPhase.active;
-    final initialPower = config is Zone2AssessmentConfig
-        ? config.warmupPower
-        : (config as HrErgConfig).startingWatts;
-    final initialTargetHr = config is HrErgConfig ? config.targetHr : null;
+    final int initialPower;
+    if (config is Zone2AssessmentConfig) {
+      initialPower = config.warmupStartPower;
+    } else if (config is PowerErgConfig) {
+      initialPower = config.warmupStartPower;
+    } else if (config is HrErgConfig) {
+      initialPower = config.startingWatts;
+    } else {
+      state = state.copyWith(error: 'Unsupported workout type.');
+      return;
+    }
+    final initialTargetHr = switch (config) {
+      HrErgConfig() => config.targetHr,
+      PowerErgConfig() => config.maxHr,
+      _ => null,
+    };
 
     state = state.copyWith(
       activeConfig: config,
@@ -136,7 +153,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       (_) => _runCountdownTick(),
     );
 
-    _evaluatePauseState(now: DateTime.now());
+    _evaluatePauseState(now: _now());
   }
 
   Future<void> stopWorkout({bool manual = true}) async {
@@ -208,7 +225,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
   }
 
   void _onPower(int watts) {
-    final now = DateTime.now();
+    final now = _now();
     _powerSamples.add(PowerSample(watts: watts, timestamp: now));
     _trimSamples(now: now);
     state = state.copyWith(currentPower: watts);
@@ -225,7 +242,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       return;
     }
 
-    final now = DateTime.now();
+    final now = _now();
     _sampleCurrentPower(now);
     _evaluatePauseState(now: now);
     if (state.isPaused) {
@@ -243,6 +260,11 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       await _handleHrErgCountdown(remaining: clampedRemaining);
     } else if (config is Zone2AssessmentConfig) {
       await _handleAssessmentCountdown(
+        config: config,
+        remaining: clampedRemaining,
+      );
+    } else if (config is PowerErgConfig) {
+      await _handlePowerErgCountdown(
         config: config,
         remaining: clampedRemaining,
       );
@@ -285,6 +307,15 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       config: config,
       elapsed: elapsed,
     );
+
+    if (nextPhase == WorkoutPhase.warmup) {
+      final nextWarmupPower = config.warmupPowerAt(elapsed);
+      if (nextWarmupPower != state.currentPower) {
+        await _trainerRepository.setTargetPower(nextWarmupPower);
+        state = state.copyWith(currentPower: nextWarmupPower);
+      }
+    }
+
     if (nextPhase == state.phase) {
       return;
     }
@@ -314,6 +345,64 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     }
   }
 
+  Future<void> _handlePowerErgCountdown({
+    required PowerErgConfig config,
+    required Duration remaining,
+  }) async {
+    final elapsed = _workoutClock.elapsed(
+      totalDuration: config.duration,
+      remainingDuration: remaining,
+    );
+    final nextPhase = _workoutClock.powerErgPhase(
+      config: config,
+      elapsed: elapsed,
+    );
+
+    if (nextPhase == WorkoutPhase.warmup) {
+      final nextWarmupPower = config.warmupPowerAt(elapsed);
+      if (nextWarmupPower != state.currentPower) {
+        await _trainerRepository.setTargetPower(nextWarmupPower);
+        state = state.copyWith(currentPower: nextWarmupPower);
+      }
+    }
+
+    if (nextPhase == state.phase) {
+      if (nextPhase == WorkoutPhase.active) {
+        await _runPowerErgActiveControl(config);
+      }
+      return;
+    }
+
+    if (nextPhase == WorkoutPhase.active) {
+      await _trainerRepository.setTargetPower(config.steadyPower);
+      state = state.copyWith(
+        phase: WorkoutPhase.active,
+        statusLabel: _workoutClock.labelForPhase(
+          WorkoutType.powerErg,
+          WorkoutPhase.active,
+        ),
+      );
+      return;
+    }
+
+    if (nextPhase == WorkoutPhase.cooldown) {
+      await _trainerRepository.setTargetPower(config.cooldownPower);
+      state = state.copyWith(
+        phase: WorkoutPhase.cooldown,
+        statusLabel: _workoutClock.labelForPhase(
+          WorkoutType.powerErg,
+          WorkoutPhase.cooldown,
+        ),
+      );
+      _adjustmentCarryNumerator = 0;
+      return;
+    }
+
+    if (nextPhase == WorkoutPhase.active) {
+      await _runPowerErgActiveControl(config);
+    }
+  }
+
   Future<void> _runHrErgControlTick() async {
     final config = state.activeConfig;
     if (config is! HrErgConfig ||
@@ -323,7 +412,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       return;
     }
 
-    final now = DateTime.now();
+    final now = _now();
     _evaluatePauseState(now: now);
     if (state.isPaused) {
       return;
@@ -351,6 +440,61 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       state = state.copyWith(
         currentPower: nextPower,
         averageHr: avgHr,
+        lastAdjustmentWatts: result.watts,
+        clearError: true,
+      );
+    } catch (error) {
+      state = state.copyWith(error: error.toString());
+    }
+  }
+
+  Future<void> _runPowerErgActiveControl(PowerErgConfig config) async {
+    if (!state.isRunning || state.isPaused || state.phase != WorkoutPhase.active) {
+      return;
+    }
+
+    final now = _now();
+    _evaluatePauseState(now: now);
+    if (state.isPaused) {
+      return;
+    }
+
+    final avgHr = _hrAverager.average(
+      _hrSamples,
+      now: now,
+      window: config.hrAverageWindow,
+    );
+    if (avgHr == null || state.targetHr == null) {
+      _pause(PauseReason.staleHr);
+      return;
+    }
+
+    state = state.copyWith(averageHr: avgHr, clearError: true);
+
+    if (avgHr <= state.targetHr!) {
+      _adjustmentCarryNumerator = 0;
+      state = state.copyWith(lastAdjustmentWatts: 0);
+      return;
+    }
+
+    final result = _powerAdjustmentPolicy.adjustmentForRate(
+      perMinute: PowerAdjustmentPolicy.fixedOverMaxHrRatePerMinute,
+      loopSeconds: 1,
+      carryNumerator: _adjustmentCarryNumerator,
+    );
+    _adjustmentCarryNumerator = result.nextCarryNumerator;
+    if (result.watts == 0) {
+      state = state.copyWith(lastAdjustmentWatts: 0);
+      return;
+    }
+
+    final currentPower = state.currentPower ?? config.steadyPower;
+    final nextPower = max(config.minPower, currentPower + result.watts);
+
+    try {
+      await _trainerRepository.setTargetPower(nextPower);
+      state = state.copyWith(
+        currentPower: nextPower,
         lastAdjustmentWatts: result.watts,
         clearError: true,
       );
@@ -396,6 +540,15 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
   }
 
   PauseReason? _pauseReason(DateTime now) {
+    final config = state.activeConfig;
+    if (config is PowerErgConfig) {
+      if (!state.trainerConnected) {
+        return PauseReason.trainerDisconnected;
+      }
+      if (state.phase != WorkoutPhase.active) {
+        return null;
+      }
+    }
     if (!state.hrConnected) {
       return PauseReason.hrDisconnected;
     }
@@ -449,19 +602,23 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
             hrSamples: _hrSamples,
             powerSamples: _powerSamples,
             rideStart: rideStart,
-            analysisEnd: DateTime.now(),
+            analysisEnd: _now(),
           )
-        : _workoutAnalytics.summarizeAssessment(
-            config: config as Zone2AssessmentConfig,
+        : config is Zone2AssessmentConfig
+        ? _workoutAnalytics.summarizeAssessment(
+            config: config,
             hrSamples: _hrSamples,
             powerSamples: _powerSamples,
             rideStart: rideStart,
             completed: !manualStop,
             hadPauseOrDisconnect: _hadPauseOrDisconnect,
-          );
+          )
+        : null;
 
     _summaryCaptured = true;
-    state = state.copyWith(summary: summary);
+    if (summary != null) {
+      state = state.copyWith(summary: summary);
+    }
   }
 
   void _sampleCurrentPower(DateTime now) {

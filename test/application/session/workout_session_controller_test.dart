@@ -159,9 +159,14 @@ void main() {
         async.flushMicrotasks();
 
         expect(controller.state.phase, WorkoutPhase.warmup);
-        expect(trainerRepo.targetPowerWrites.first, 145);
+        expect(trainerRepo.targetPowerWrites.first, 90);
 
-        async.elapse(const Duration(minutes: 10));
+        async.elapse(const Duration(minutes: 5));
+        async.flushMicrotasks();
+        expect(controller.state.phase, WorkoutPhase.warmup);
+        expect(trainerRepo.targetPowerWrites.contains(135), isTrue);
+
+        async.elapse(const Duration(minutes: 5));
         async.flushMicrotasks();
         expect(controller.state.phase, WorkoutPhase.active);
         expect(trainerRepo.targetPowerWrites.contains(180), isTrue);
@@ -174,6 +179,63 @@ void main() {
         async.elapse(const Duration(minutes: 5));
         async.flushMicrotasks();
         expect(controller.state.phase, WorkoutPhase.completed);
+      });
+    });
+
+    test('power ERG reduces power by 5 W/min above max HR and then holds', () {
+      fakeAsync((async) {
+        final clock = async.getClock(DateTime(2026, 1, 1, 8));
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = WorkoutSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+          nowProvider: () => clock.now(),
+        )..initialize();
+
+        connectDevices(hrRepo, trainerRepo);
+        async.flushMicrotasks();
+
+        controller.startWorkout(
+          PowerErgConfig(
+            targetPower: 200,
+            maxHr: 150,
+            activeDuration: const Duration(minutes: 30),
+          ),
+        );
+        async.flushMicrotasks();
+
+        hrRepo.emitHr(145, timestamp: clock.now());
+        async.flushMicrotasks();
+
+        expect(controller.state.phase, WorkoutPhase.warmup);
+        expect(trainerRepo.targetPowerWrites.first, 100);
+
+        async.elapse(const Duration(minutes: 10));
+        async.flushMicrotasks();
+        expect(controller.state.phase, WorkoutPhase.active);
+        expect(controller.state.statusLabel, 'Power Block');
+        expect(controller.state.currentPower, 200);
+        hrRepo.emitHr(151, timestamp: clock.now());
+        async.flushMicrotasks();
+
+        for (var i = 0; i < 15; i++) {
+          async.elapse(const Duration(seconds: 4));
+          hrRepo.emitHr(151, timestamp: clock.now());
+          async.flushMicrotasks();
+        }
+
+        expect(controller.state.currentPower, 195);
+
+        hrRepo.emitHr(150, timestamp: clock.now());
+        async.flushMicrotasks();
+        for (var i = 0; i < 15; i++) {
+          async.elapse(const Duration(seconds: 4));
+          hrRepo.emitHr(150, timestamp: clock.now());
+          async.flushMicrotasks();
+        }
+
+        expect(controller.state.currentPower, 195);
       });
     });
   });
