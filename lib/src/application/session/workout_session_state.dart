@@ -23,6 +23,7 @@ class WorkoutSessionState extends Equatable {
     this.totalDuration,
     this.remainingDuration,
     this.statusLabel = 'Idle',
+    this.provisionalSummary,
     this.summary,
     this.error,
   });
@@ -42,6 +43,7 @@ class WorkoutSessionState extends Equatable {
   final Duration? totalDuration;
   final Duration? remainingDuration;
   final String statusLabel;
+  final WorkoutSummary? provisionalSummary;
   final WorkoutSummary? summary;
   final String? error;
 
@@ -66,8 +68,10 @@ class WorkoutSessionState extends Equatable {
     Duration? totalDuration,
     Duration? remainingDuration,
     String? statusLabel,
+    WorkoutSummary? provisionalSummary,
     WorkoutSummary? summary,
     String? error,
+    bool clearProvisionalSummary = false,
     bool clearSummary = false,
     bool clearError = false,
     bool clearPauseReason = false,
@@ -91,6 +95,9 @@ class WorkoutSessionState extends Equatable {
       totalDuration: totalDuration ?? this.totalDuration,
       remainingDuration: remainingDuration ?? this.remainingDuration,
       statusLabel: statusLabel ?? this.statusLabel,
+      provisionalSummary: clearProvisionalSummary
+          ? null
+          : (provisionalSummary ?? this.provisionalSummary),
       summary: clearSummary ? null : (summary ?? this.summary),
       error: clearError ? null : (error ?? this.error),
     );
@@ -113,6 +120,7 @@ class WorkoutSessionState extends Equatable {
     totalDuration,
     remainingDuration,
     statusLabel,
+    provisionalSummary,
     summary,
     error,
   ];

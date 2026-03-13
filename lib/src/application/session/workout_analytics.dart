@@ -9,26 +9,29 @@ import '../../domain/models/zone2_estimate.dart';
 class WorkoutAnalytics {
   const WorkoutAnalytics();
 
+  static const Duration hrErgEarlyWindowStart = Duration(minutes: 10);
+  static const Duration hrErgWindowLength = Duration(minutes: 20);
+  static const Duration hrErgMinimumProvisionalDuration = Duration(minutes: 30);
+
   WorkoutSummary summarizeHrErg({
     required List<HrSample> hrSamples,
     required List<PowerSample> powerSamples,
     required DateTime rideStart,
     required DateTime analysisEnd,
   }) {
-    final trimmedStart = rideStart.add(const Duration(minutes: 10));
-    final trimmedDuration = analysisEnd.difference(trimmedStart);
-    if (trimmedDuration < const Duration(minutes: 40)) {
+    final elapsed = analysisEnd.difference(rideStart);
+    if (elapsed < hrErgMinimumProvisionalDuration) {
       return const WorkoutSummary(
         analysisAvailable: false,
         analysisMessage:
-            'Durability analysis unavailable for rides under 55 minutes.',
+            'Durability analysis becomes available after 30 minutes.',
       );
     }
 
-    final earlyStart = trimmedStart;
-    final earlyEnd = earlyStart.add(const Duration(minutes: 20));
+    final earlyStart = rideStart.add(hrErgEarlyWindowStart);
+    final earlyEnd = earlyStart.add(hrErgWindowLength);
     final lateEnd = analysisEnd;
-    final lateStart = lateEnd.subtract(const Duration(minutes: 20));
+    final lateStart = lateEnd.subtract(hrErgWindowLength);
     return _buildSummary(
       hrSamples: hrSamples,
       powerSamples: powerSamples,
@@ -39,6 +42,106 @@ class WorkoutAnalytics {
       fallbackMessage:
           'Durability analysis unavailable because ride data was incomplete.',
       interpretationBuilder: _durabilityInterpretation,
+    );
+  }
+
+  WorkoutSummary summarizeHrErgProvisional({
+    required List<HrSample> hrSamples,
+    required List<PowerSample> powerSamples,
+    required DateTime rideStart,
+    required DateTime analysisEnd,
+  }) {
+    final elapsed = analysisEnd.difference(rideStart);
+    if (elapsed < hrErgMinimumProvisionalDuration) {
+      return const WorkoutSummary(
+        analysisAvailable: false,
+        analysisMessage:
+            'Provisional durability becomes available after 30 minutes.',
+        provisional: true,
+      );
+    }
+
+    final earlyStart = rideStart.add(hrErgEarlyWindowStart);
+    final earlyEnd = earlyStart.add(hrErgWindowLength);
+    final lateEnd = analysisEnd;
+    final lateStart = lateEnd.subtract(hrErgWindowLength);
+    return _buildSummary(
+      hrSamples: hrSamples,
+      powerSamples: powerSamples,
+      earlyStart: earlyStart,
+      earlyEnd: earlyEnd,
+      lateStart: lateStart,
+      lateEnd: lateEnd,
+      fallbackMessage:
+          'Provisional durability is unavailable because ride data is incomplete.',
+      interpretationBuilder: _durabilityInterpretation,
+      provisional: true,
+    );
+  }
+
+  WorkoutSummary summarizePowerErgProvisional({
+    required List<HrSample> hrSamples,
+    required List<PowerSample> powerSamples,
+    required DateTime rideStart,
+    required DateTime analysisEnd,
+  }) {
+    final elapsed = analysisEnd.difference(rideStart);
+    if (elapsed < hrErgMinimumProvisionalDuration) {
+      return const WorkoutSummary(
+        analysisAvailable: false,
+        analysisMessage:
+            'Provisional aerobic drift becomes available after 30 minutes.',
+        provisional: true,
+      );
+    }
+
+    final earlyStart = rideStart.add(hrErgEarlyWindowStart);
+    final earlyEnd = earlyStart.add(hrErgWindowLength);
+    final lateEnd = analysisEnd;
+    final lateStart = lateEnd.subtract(hrErgWindowLength);
+    return _buildSummary(
+      hrSamples: hrSamples,
+      powerSamples: powerSamples,
+      earlyStart: earlyStart,
+      earlyEnd: earlyEnd,
+      lateStart: lateStart,
+      lateEnd: lateEnd,
+      fallbackMessage:
+          'Provisional aerobic drift is unavailable because ride data is incomplete.',
+      interpretationBuilder: _durabilityInterpretation,
+      provisional: true,
+    );
+  }
+
+  WorkoutSummary summarizePowerErg({
+    required List<HrSample> hrSamples,
+    required List<PowerSample> powerSamples,
+    required DateTime rideStart,
+    required DateTime analysisEnd,
+  }) {
+    final elapsed = analysisEnd.difference(rideStart);
+    if (elapsed < hrErgMinimumProvisionalDuration) {
+      return const WorkoutSummary(
+        analysisAvailable: false,
+        analysisMessage:
+            'Aerobic drift becomes available after 30 minutes.',
+      );
+    }
+
+    final earlyStart = rideStart.add(hrErgEarlyWindowStart);
+    final earlyEnd = earlyStart.add(hrErgWindowLength);
+    final lateEnd = analysisEnd;
+    final lateStart = lateEnd.subtract(hrErgWindowLength);
+    return _buildSummary(
+      hrSamples: hrSamples,
+      powerSamples: powerSamples,
+      earlyStart: earlyStart,
+      earlyEnd: earlyEnd,
+      lateStart: lateStart,
+      lateEnd: lateEnd,
+      fallbackMessage:
+          'Aerobic drift is unavailable because ride data was incomplete.',
+      interpretationBuilder: _powerErgInterpretation,
     );
   }
 
@@ -103,6 +206,7 @@ class WorkoutAnalytics {
     required DateTime lateEnd,
     required String fallbackMessage,
     required String Function(double driftPercent) interpretationBuilder,
+    bool provisional = false,
   }) {
     final earlyPower = _averagePower(powerSamples, earlyStart, earlyEnd);
     final latePower = _averagePower(powerSamples, lateStart, lateEnd);
@@ -119,6 +223,7 @@ class WorkoutAnalytics {
       return WorkoutSummary(
         analysisAvailable: false,
         analysisMessage: fallbackMessage,
+        provisional: provisional,
       );
     }
 
@@ -132,6 +237,7 @@ class WorkoutAnalytics {
       powerFadePercent: powerFade,
       aerobicDriftPercent: drift,
       interpretation: interpretationBuilder(drift),
+      provisional: provisional,
     );
   }
 
@@ -194,6 +300,16 @@ class WorkoutAnalytics {
       return 'This assessment sat inside your likely upper Zone 2 range.';
     }
     return 'This assessment was likely above your durable upper Zone 2.';
+  }
+
+  String _powerErgInterpretation(double driftPercent) {
+    if (driftPercent < 3) {
+      return 'This power sat in Zone 2.';
+    }
+    if (driftPercent <= 5) {
+      return 'This power was borderline upper Zone 2.';
+    }
+    return 'This power was higher than Zone 2.';
   }
 
   Zone2Estimate _buildZone2Estimate({

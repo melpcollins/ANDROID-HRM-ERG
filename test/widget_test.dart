@@ -17,10 +17,11 @@ void main() {
     required FakeHrMonitorRepository hrRepo,
     required FakeTrainerRepository trainerRepo,
     Map<String, Object> mockPrefs = const <String, Object>{},
+    Size physicalSize = const Size(1200, 2200),
   }) async {
     SharedPreferences.setMockInitialValues(mockPrefs);
     tester.view.devicePixelRatio = 1.0;
-    tester.view.physicalSize = const Size(1200, 2200);
+    tester.view.physicalSize = physicalSize;
     addTearDown(() {
       tester.view.resetPhysicalSize();
       tester.view.resetDevicePixelRatio();
@@ -95,6 +96,8 @@ void main() {
 
     expect(find.text('Target Power'), findsOneWidget);
     expect(find.text('Max Heart Rate'), findsOneWidget);
+    expect(find.text('140'), findsWidgets);
+    expect(find.text('125'), findsWidgets);
     expect(find.textContaining('10 min ramp from 50% to 100%'), findsOneWidget);
     expect(find.text('Target Heart Rate'), findsNothing);
 
@@ -118,9 +121,31 @@ void main() {
     await tester.pump();
 
     expect(find.text('Live Session'), findsOneWidget);
+    expect(find.text('HR Avg (10s)'), findsNothing);
     expect(find.text('Target -5'), findsOneWidget);
     expect(find.text('Target +5'), findsOneWidget);
     expect(find.text('01:00:00'), findsOneWidget);
+  });
+
+  testWidgets('workout setup collapses on start and reopens on stop', (
+    WidgetTester tester,
+  ) async {
+    final hrRepo = FakeHrMonitorRepository();
+    final trainerRepo = FakeTrainerRepository();
+    await pumpApp(tester, hrRepo: hrRepo, trainerRepo: trainerRepo);
+
+    expect(find.text('Starting Watts'), findsOneWidget);
+
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+
+    expect(find.text('Starting Watts'), findsNothing);
+    expect(find.text('Stop'), findsOneWidget);
+
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+
+    expect(find.text('Starting Watts'), findsOneWidget);
   });
 
   testWidgets('starts Zone 2 assessment and shows fixed countdown', (
@@ -153,6 +178,9 @@ void main() {
 
     expect(find.text('Live Session'), findsOneWidget);
     expect(find.text('Max HR'), findsOneWidget);
+    expect(find.text('Target Power'), findsOneWidget);
+    expect(find.text('Power -5'), findsOneWidget);
+    expect(find.text('Power +5'), findsOneWidget);
     expect(find.text('01:15:00'), findsOneWidget);
   });
 
@@ -184,6 +212,22 @@ void main() {
     await tester.pump();
 
     expect(find.text('No devices yet. Tap Scan.'), findsNWidgets(2));
+  });
+
+  testWidgets('compact connected device pills do not overflow on phone width', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+      physicalSize: const Size(390, 844),
+    );
+
+    expect(find.byKey(const ValueKey('compact-device-row')), findsOneWidget);
+    expect(find.text('HR-Connected'), findsOneWidget);
+    expect(find.text('TR-Connected'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('loads saved HR-ERG defaults from shared preferences', (

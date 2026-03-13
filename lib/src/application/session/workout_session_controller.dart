@@ -126,6 +126,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       targetHr: initialTargetHr,
       lastAdjustmentWatts: 0,
       statusLabel: _workoutClock.labelForPhase(config.workoutType, initialPhase),
+      clearProvisionalSummary: true,
       clearSummary: true,
       clearError: true,
       clearPauseReason: true,
@@ -200,6 +201,36 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     );
   }
 
+  Future<void> updatePowerErgTargetPower(int targetPower) async {
+    final config = state.activeConfig;
+    if (config is! PowerErgConfig) {
+      return;
+    }
+
+    final nextConfig = PowerErgConfig(
+      targetPower: targetPower,
+      maxHr: config.maxHr,
+      activeDuration: config.activeDuration,
+      loopSeconds: config.loopSeconds,
+      hrAverageWindow: config.hrAverageWindow,
+      minPower: config.minPower,
+    );
+
+    state = state.copyWith(activeConfig: nextConfig, clearError: true);
+
+    if (state.phase == WorkoutPhase.active) {
+      try {
+        await _trainerRepository.setTargetPower(nextConfig.steadyPower);
+        state = state.copyWith(
+          currentPower: nextConfig.steadyPower,
+          clearError: true,
+        );
+      } catch (error) {
+        state = state.copyWith(error: error.toString());
+      }
+    }
+  }
+
   void _onHrSample(HrSample sample) {
     _lastHrSampleAt = sample.timestamp;
     _hrSamples.add(sample);
@@ -264,6 +295,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
         remaining: clampedRemaining,
       );
     } else if (config is PowerErgConfig) {
+      _updatePowerErgProvisionalSummary();
       await _handlePowerErgCountdown(
         config: config,
         remaining: clampedRemaining,
@@ -278,6 +310,8 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
   Future<void> _handleHrErgCountdown({
     required Duration remaining,
   }) async {
+    _updateHrErgProvisionalSummary();
+
     if (state.phase == WorkoutPhase.cooldown) {
       return;
     }
@@ -291,8 +325,51 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
           WorkoutType.hrErg,
           WorkoutPhase.cooldown,
         ),
+        clearProvisionalSummary: true,
       );
     }
+  }
+
+  void _updateHrErgProvisionalSummary() {
+    final config = state.activeConfig;
+    final rideStart = _rideStart;
+    if (config is! HrErgConfig ||
+        rideStart == null ||
+        state.phase == WorkoutPhase.cooldown ||
+        state.phase == WorkoutPhase.completed) {
+      return;
+    }
+
+    final provisional = _workoutAnalytics.summarizeHrErgProvisional(
+      hrSamples: _hrSamples,
+      powerSamples: _powerSamples,
+      rideStart: rideStart,
+      analysisEnd: _now(),
+    );
+    state = state.copyWith(
+      provisionalSummary: provisional.analysisAvailable ? provisional : null,
+    );
+  }
+
+  void _updatePowerErgProvisionalSummary() {
+    final config = state.activeConfig;
+    final rideStart = _rideStart;
+    if (config is! PowerErgConfig ||
+        rideStart == null ||
+        state.phase == WorkoutPhase.cooldown ||
+        state.phase == WorkoutPhase.completed) {
+      return;
+    }
+
+    final provisional = _workoutAnalytics.summarizePowerErgProvisional(
+      hrSamples: _hrSamples,
+      powerSamples: _powerSamples,
+      rideStart: rideStart,
+      analysisEnd: _now(),
+    );
+    state = state.copyWith(
+      provisionalSummary: provisional.analysisAvailable ? provisional : null,
+    );
   }
 
   Future<void> _handleAssessmentCountdown({
@@ -386,6 +463,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     }
 
     if (nextPhase == WorkoutPhase.cooldown) {
+      _captureSummaryIfNeeded(manualStop: false);
       await _trainerRepository.setTargetPower(config.cooldownPower);
       state = state.copyWith(
         phase: WorkoutPhase.cooldown,
@@ -612,6 +690,13 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
             rideStart: rideStart,
             completed: !manualStop,
             hadPauseOrDisconnect: _hadPauseOrDisconnect,
+          )
+        : config is PowerErgConfig
+        ? _workoutAnalytics.summarizePowerErg(
+            hrSamples: _hrSamples,
+            powerSamples: _powerSamples,
+            rideStart: rideStart,
+            analysisEnd: _now(),
           )
         : null;
 

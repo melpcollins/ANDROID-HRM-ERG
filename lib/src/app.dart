@@ -48,6 +48,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
   bool _showHrmDetails = true;
   bool _showTrainerDetails = true;
   bool _showWorkoutTypeOptions = true;
+  bool _showWorkoutSetup = true;
 
   @override
   void initState() {
@@ -56,8 +57,8 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     _targetHrController = TextEditingController(text: '112');
     _durationHoursController = TextEditingController(text: '1');
     _durationMinutesController = TextEditingController(text: '0');
-    _powerErgPowerController = TextEditingController(text: '180');
-    _powerErgMaxHrController = TextEditingController(text: '150');
+    _powerErgPowerController = TextEditingController(text: '140');
+    _powerErgMaxHrController = TextEditingController(text: '125');
     _powerErgDurationHoursController = TextEditingController(text: '1');
     _powerErgDurationMinutesController = TextEditingController(text: '0');
     _assessmentPowerController = TextEditingController(text: '180');
@@ -119,6 +120,19 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
           _showTrainerDetails) {
         setState(() {
           _showTrainerDetails = false;
+        });
+      }
+    });
+    ref.listen(workoutSessionControllerProvider, (previous, next) {
+      if (previous?.isRunning != true && next.isRunning && _showWorkoutSetup) {
+        setState(() {
+          _showWorkoutSetup = false;
+        });
+      }
+
+      if (previous?.isRunning == true && !next.isRunning && !_showWorkoutSetup) {
+        setState(() {
+          _showWorkoutSetup = true;
         });
       }
     });
@@ -353,6 +367,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     required WorkoutSessionState sessionState,
     required sessionController,
   }) {
+    final showSetupDetails = _showWorkoutSetup || !sessionState.isRunning;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -373,13 +388,19 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
                     ),
-                    onPressed: () => sessionController.stopWorkout(),
+                    onPressed: () async {
+                      setState(() {
+                        _showWorkoutSetup = true;
+                      });
+                      await sessionController.stopWorkout();
+                    },
                     child: const Text('Stop'),
                   ),
               ],
             ),
-            const SizedBox(height: 12),
-            if (selectedType == WorkoutType.hrErg) ...[
+            if (showSetupDetails) ...[
+              const SizedBox(height: 12),
+              if (selectedType == WorkoutType.hrErg) ...[
               TextField(
                 controller: _startingWattsController,
                 keyboardType: TextInputType.number,
@@ -487,6 +508,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                 'Fixed protocol: 10 min ramp from 50% to 100%, 75 min at 100%, 5 min at 60%.',
               ),
             ],
+            ],
             if (sessionState.error != null) ...[
               const SizedBox(height: 12),
               Text(
@@ -494,14 +516,16 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton(
-                onPressed: canStart ? () => _startWorkout(selectedType) : null,
-                child: const Text('Start'),
+            if (showSetupDetails) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton(
+                  onPressed: canStart ? () => _startWorkout(selectedType) : null,
+                  child: const Text('Start'),
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -515,6 +539,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
   ) {
     if (!sessionState.isRunning &&
         !sessionState.isCompleted &&
+        sessionState.provisionalSummary == null &&
         sessionState.summary == null) {
       return const SizedBox.shrink();
     }
@@ -542,17 +567,18 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                   : '${sessionState.currentHr} bpm',
             ),
             _MetricRow(
-              label: 'HR Avg (10s)',
-              value: sessionState.averageHr == null
-                  ? '--'
-                  : '${sessionState.averageHr!.toStringAsFixed(1)} bpm',
-            ),
-            _MetricRow(
               label: 'Power',
               value: sessionState.currentPower == null
                   ? '--'
                   : '${sessionState.currentPower} W',
             ),
+            if (sessionState.selectedWorkoutType == WorkoutType.powerErg &&
+                sessionState.activeConfig is PowerErgConfig)
+              _MetricRow(
+                label: 'Target Power',
+                value:
+                    '${(sessionState.activeConfig as PowerErgConfig).targetPower} W',
+              ),
             if (sessionState.targetHr != null)
               _MetricRow(
                 label: sessionState.selectedWorkoutType == WorkoutType.powerErg
@@ -560,6 +586,24 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                     : 'Target HR',
                 value: '${sessionState.targetHr} bpm',
               ),
+            if (sessionState.provisionalSummary != null) ...[
+              const SizedBox(height: 12),
+              const Divider(),
+              const SizedBox(height: 8),
+              Text(
+                sessionState.selectedWorkoutType == WorkoutType.powerErg
+                    ? 'Provisional Aerobic Drift'
+                    : 'Provisional Durability',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              _SummaryContent(
+                summary: sessionState.provisionalSummary!,
+                colorizeInterpretation: true,
+                showPowerFade:
+                    sessionState.selectedWorkoutType != WorkoutType.powerErg,
+              ),
+            ],
             if (sessionState.selectedWorkoutType == WorkoutType.hrErg &&
                 sessionState.isRunning) ...[
               const SizedBox(height: 8),
@@ -584,12 +628,33 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                   ),
                 ],
               ),
+            ] else if (sessionState.selectedWorkoutType == WorkoutType.powerErg &&
+                sessionState.isRunning) ...[
               const SizedBox(height: 8),
-              _MetricRow(
-                label: 'Last Adjustment',
-                value: sessionState.lastAdjustmentWatts == null
-                    ? '--'
-                    : '${sessionState.lastAdjustmentWatts} W',
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: sessionState.activeConfig is! PowerErgConfig
+                        ? null
+                        : () => sessionController.updatePowerErgTargetPower(
+                              (sessionState.activeConfig as PowerErgConfig)
+                                      .targetPower -
+                                  5,
+                            ),
+                    child: const Text('Power -5'),
+                  ),
+                  OutlinedButton(
+                    onPressed: sessionState.activeConfig is! PowerErgConfig
+                        ? null
+                        : () => sessionController.updatePowerErgTargetPower(
+                              (sessionState.activeConfig as PowerErgConfig)
+                                      .targetPower +
+                                  5,
+                            ),
+                    child: const Text('Power +5'),
+                  ),
+                ],
               ),
             ],
             if (sessionState.summary != null) ...[
@@ -597,11 +662,19 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
               const Divider(),
               const SizedBox(height: 8),
               Text(
-                'Summary',
+                sessionState.selectedWorkoutType == WorkoutType.powerErg
+                    ? 'Power-ERG Result'
+                    : 'Summary',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(height: 8),
-              _SummaryContent(summary: sessionState.summary!),
+              _SummaryContent(
+                summary: sessionState.summary!,
+                colorizeInterpretation:
+                    sessionState.selectedWorkoutType == WorkoutType.powerErg,
+                showPowerFade:
+                    sessionState.selectedWorkoutType != WorkoutType.powerErg,
+              ),
             ],
           ],
         ),
@@ -941,9 +1014,15 @@ class _WorkoutTypeOption extends StatelessWidget {
 }
 
 class _SummaryContent extends StatelessWidget {
-  const _SummaryContent({required this.summary});
+  const _SummaryContent({
+    required this.summary,
+    this.colorizeInterpretation = false,
+    this.showPowerFade = true,
+  });
 
   final WorkoutSummary summary;
+  final bool colorizeInterpretation;
+  final bool showPowerFade;
 
   @override
   Widget build(BuildContext context) {
@@ -954,13 +1033,17 @@ class _SummaryContent extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _MetricRow(
-          label: 'Power Fade',
-          value: '${summary.powerFadePercent!.toStringAsFixed(1)}%',
-        ),
+        if (showPowerFade && summary.powerFadePercent != null)
+          _MetricRow(
+            label: 'Power Fade',
+            value: '${summary.powerFadePercent!.toStringAsFixed(1)}%',
+          ),
         _MetricRow(
           label: 'Aerobic Drift',
           value: '${summary.aerobicDriftPercent!.toStringAsFixed(1)}%',
+          valueColor: colorizeInterpretation
+              ? _durabilityColor(summary.aerobicDriftPercent)
+              : null,
         ),
         if (summary.zone2Estimate != null)
           _MetricRow(
@@ -976,7 +1059,15 @@ class _SummaryContent extends StatelessWidget {
           ),
         if (summary.interpretation != null) ...[
           const SizedBox(height: 6),
-          Text(summary.interpretation!),
+          Text(
+            summary.interpretation!,
+            style: colorizeInterpretation
+                ? TextStyle(
+                    color: _durabilityColor(summary.aerobicDriftPercent),
+                    fontWeight: FontWeight.w700,
+                  )
+                : null,
+          ),
         ],
         if (summary.zone2Estimate != null) ...[
           const SizedBox(height: 6),
@@ -984,6 +1075,19 @@ class _SummaryContent extends StatelessWidget {
         ],
       ],
     );
+  }
+
+  Color? _durabilityColor(double? driftPercent) {
+    if (driftPercent == null) {
+      return null;
+    }
+    if (driftPercent < 3) {
+      return Colors.green.shade700;
+    }
+    if (driftPercent <= 5) {
+      return Colors.orange.shade800;
+    }
+    return Colors.red.shade700;
   }
 }
 
@@ -1023,6 +1127,11 @@ class _DeviceSection extends StatelessWidget {
     final compactChipLabel = title == 'HR Monitor'
         ? 'HR-Connected'
         : 'TR-Connected';
+    final statusLabel = compact && isConnected
+        ? compactChipLabel
+        : isConnected
+        ? 'Connected'
+        : 'Disconnected';
     return Card(
       child: Padding(
         padding: EdgeInsets.all(compact ? 10 : 12),
@@ -1038,23 +1147,28 @@ class _DeviceSection extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
-                if (compact) const Spacer(),
-                InkWell(
-                  onTap: onToggleExpanded,
-                  borderRadius: BorderRadius.circular(999),
-                  child: Chip(
-                    label: Text(
-                      compact && isConnected
-                          ? compactChipLabel
-                          : isConnected
-                          ? 'Connected'
-                          : 'Disconnected',
+                if (compact)
+                  Expanded(
+                    child: InkWell(
+                      onTap: onToggleExpanded,
+                      borderRadius: BorderRadius.circular(999),
+                      child: _CompactStatusPill(
+                        label: statusLabel,
+                        isConnected: isConnected,
+                      ),
                     ),
-                    backgroundColor: isConnected
-                        ? Colors.green.shade100
-                        : Colors.red.shade100,
+                  )
+                else
+                  InkWell(
+                    onTap: onToggleExpanded,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Chip(
+                      label: Text(statusLabel),
+                      backgroundColor: isConnected
+                          ? Colors.green.shade100
+                          : Colors.red.shade100,
+                    ),
                   ),
-                ),
               ],
             ),
             if (showDetails) ...[
@@ -1111,11 +1225,52 @@ class _DeviceSection extends StatelessWidget {
   }
 }
 
+class _CompactStatusPill extends StatelessWidget {
+  const _CompactStatusPill({
+    required this.label,
+    required this.isConnected,
+  });
+
+  final String label;
+  final bool isConnected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: isConnected ? Colors.green.shade100 : Colors.red.shade100,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Center(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MetricRow extends StatelessWidget {
-  const _MetricRow({required this.label, required this.value});
+  const _MetricRow({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
 
   final String label;
   final String value;
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1124,7 +1279,13 @@ class _MetricRow extends StatelessWidget {
       child: Row(
         children: [
           Expanded(child: Text(label)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              color: valueColor,
+            ),
+          ),
         ],
       ),
     );

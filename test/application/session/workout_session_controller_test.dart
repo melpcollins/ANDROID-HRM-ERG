@@ -135,6 +135,44 @@ void main() {
       });
     });
 
+    test('HR-ERG provisional durability appears after 30 minutes', () {
+      fakeAsync((async) {
+        final clock = async.getClock(DateTime(2026, 1, 1, 8));
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = WorkoutSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+          nowProvider: () => clock.now(),
+        )..initialize();
+
+        connectDevices(hrRepo, trainerRepo);
+        async.flushMicrotasks();
+
+        controller.startWorkout(
+          const HrErgConfig(
+            startingWatts: 180,
+            targetHr: 130,
+            loopSeconds: 5,
+            duration: Duration(minutes: 60),
+          ),
+        );
+        async.flushMicrotasks();
+
+        for (var tick = 0; tick < 450; tick++) {
+          hrRepo.emitHr(130, timestamp: clock.now());
+          trainerRepo.emitPower(180);
+          async.flushMicrotasks();
+          async.elapse(const Duration(seconds: 4));
+          async.flushMicrotasks();
+        }
+
+        expect(controller.state.provisionalSummary, isNotNull);
+        expect(controller.state.provisionalSummary!.analysisAvailable, isTrue);
+        expect(controller.state.provisionalSummary!.provisional, isTrue);
+      });
+    });
+
     test('assessment transitions warm-up, steady block, cooldown, and complete', () {
       fakeAsync((async) {
         final hrRepo = FakeHrMonitorRepository();
@@ -236,6 +274,81 @@ void main() {
         }
 
         expect(controller.state.currentPower, 195);
+      });
+    });
+
+    test('Power-ERG provisional aerobic drift appears after 30 minutes', () {
+      fakeAsync((async) {
+        final clock = async.getClock(DateTime(2026, 1, 1, 8));
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = WorkoutSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+          nowProvider: () => clock.now(),
+        )..initialize();
+
+        connectDevices(hrRepo, trainerRepo);
+        async.flushMicrotasks();
+
+        controller.startWorkout(
+          PowerErgConfig(
+            targetPower: 180,
+            maxHr: 150,
+            activeDuration: const Duration(minutes: 40),
+          ),
+        );
+        async.flushMicrotasks();
+
+        for (var tick = 0; tick < 450; tick++) {
+          hrRepo.emitHr(135, timestamp: clock.now());
+          trainerRepo.emitPower(180);
+          async.flushMicrotasks();
+          async.elapse(const Duration(seconds: 4));
+          async.flushMicrotasks();
+        }
+
+        expect(controller.state.provisionalSummary, isNotNull);
+        expect(controller.state.provisionalSummary!.analysisAvailable, isTrue);
+        expect(controller.state.provisionalSummary!.provisional, isTrue);
+      });
+    });
+
+    test('Power-ERG captures final aerobic drift result at cooldown', () {
+      fakeAsync((async) {
+        final clock = async.getClock(DateTime(2026, 1, 1, 8));
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = WorkoutSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+          nowProvider: () => clock.now(),
+        )..initialize();
+
+        connectDevices(hrRepo, trainerRepo);
+        async.flushMicrotasks();
+
+        controller.startWorkout(
+          PowerErgConfig(
+            targetPower: 180,
+            maxHr: 150,
+            activeDuration: const Duration(minutes: 40),
+          ),
+        );
+        async.flushMicrotasks();
+
+        for (var tick = 0; tick < 750; tick++) {
+          hrRepo.emitHr(135, timestamp: clock.now());
+          trainerRepo.emitPower(180);
+          async.flushMicrotasks();
+          async.elapse(const Duration(seconds: 4));
+          async.flushMicrotasks();
+        }
+
+        expect(controller.state.phase, WorkoutPhase.cooldown);
+        expect(controller.state.summary, isNotNull);
+        expect(controller.state.summary!.analysisAvailable, isTrue);
+        expect(controller.state.summary!.interpretation, 'This power sat in Zone 2.');
       });
     });
   });
@@ -344,10 +457,56 @@ void main() {
           watts: 180,
         ),
         rideStart: start,
-        analysisEnd: start.add(const Duration(minutes: 30)),
+        analysisEnd: start.add(const Duration(minutes: 29)),
       );
 
       expect(summary.analysisAvailable, isFalse);
+    });
+
+    test('HR-ERG provisional durability is unavailable before 30 minutes', () {
+      final analytics = const WorkoutAnalytics();
+      final start = DateTime(2026, 1, 1, 9);
+
+      final summary = analytics.summarizeHrErgProvisional(
+        hrSamples: hrWindowSamples(
+          start: start,
+          end: start.add(const Duration(minutes: 25)),
+          bpm: 130,
+        ),
+        powerSamples: powerWindowSamples(
+          start: start,
+          end: start.add(const Duration(minutes: 25)),
+          watts: 180,
+        ),
+        rideStart: start,
+        analysisEnd: start.add(const Duration(minutes: 29)),
+      );
+
+      expect(summary.analysisAvailable, isFalse);
+      expect(summary.provisional, isTrue);
+    });
+
+    test('Power-ERG provisional aerobic drift is unavailable before 30 minutes', () {
+      final analytics = const WorkoutAnalytics();
+      final start = DateTime(2026, 1, 1, 9);
+
+      final summary = analytics.summarizePowerErgProvisional(
+        hrSamples: hrWindowSamples(
+          start: start,
+          end: start.add(const Duration(minutes: 25)),
+          bpm: 135,
+        ),
+        powerSamples: powerWindowSamples(
+          start: start,
+          end: start.add(const Duration(minutes: 25)),
+          watts: 180,
+        ),
+        rideStart: start,
+        analysisEnd: start.add(const Duration(minutes: 29)),
+      );
+
+      expect(summary.analysisAvailable, isFalse);
+      expect(summary.provisional, isTrue);
     });
   });
 

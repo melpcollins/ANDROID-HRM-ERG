@@ -10,6 +10,7 @@ class WorkoutSummary extends Equatable {
     this.interpretation,
     this.analysisMessage,
     this.zone2Estimate,
+    this.provisional = false,
   });
 
   final bool analysisAvailable;
@@ -18,6 +19,7 @@ class WorkoutSummary extends Equatable {
   final String? interpretation;
   final String? analysisMessage;
   final Zone2Estimate? zone2Estimate;
+  final bool provisional;
 
   @override
   List<Object?> get props => [
@@ -27,5 +29,6 @@ class WorkoutSummary extends Equatable {
     interpretation,
     analysisMessage,
     zone2Estimate,
+    provisional,
   ];
 }
