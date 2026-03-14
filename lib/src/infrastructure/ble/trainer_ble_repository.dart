@@ -2,45 +2,66 @@ import 'dart:async';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
+import '../../domain/models/connection_status.dart';
+import '../../domain/models/trainer_telemetry.dart';
 import '../../domain/repositories/trainer_repository.dart';
 import 'ble_device_repository_base.dart';
+import 'ble_event_logger.dart';
+import 'indoor_bike_data_parser.dart';
 
 class TrainerBleRepository extends BleDeviceRepositoryBase
     implements TrainerRepository {
   TrainerBleRepository({required super.store})
-    : _powerController = StreamController<int>.broadcast(),
+    : _telemetryController = StreamController<TrainerTelemetry>.broadcast(),
       super(nameMatcher: _isLikelyTrainer);
 
   static const int _requestControlOpcode = 0x00;
   static const int _setTargetPowerOpcode = 0x05;
+  static const Duration _staleThreshold = Duration(seconds: 10);
 
-  final StreamController<int> _powerController;
-  int _currentPower = 0;
+  final StreamController<TrainerTelemetry> _telemetryController;
+  TrainerTelemetry? _latestTelemetry;
 
   BluetoothCharacteristic? _controlPointCharacteristic;
+  BluetoothCharacteristic? _indoorBikeDataCharacteristic;
+  StreamSubscription<List<int>>? _telemetrySubscription;
+  Timer? _staleTimer;
   bool _hasControl = false;
 
   @override
-  Stream<int> get currentPower async* {
-    yield _currentPower;
-    yield* _powerController.stream;
+  Stream<TrainerTelemetry> get telemetry async* {
+    if (_latestTelemetry != null) {
+      yield _latestTelemetry!;
+    }
+    yield* _telemetryController.stream;
   }
 
   @override
   Future<void> connect(String deviceId) async {
     await super.connect(deviceId);
-    await _prepareFtms();
+    try {
+      await _prepareFtms();
+      _markAwaitingTelemetry();
+    } catch (_) {
+      await super.disconnect();
+      rethrow;
+    }
   }
 
   @override
   Future<void> reconnect() async {
     await super.reconnect();
-    await _prepareFtms();
   }
 
   @override
   Future<void> disconnect() async {
+    await _telemetrySubscription?.cancel();
+    _telemetrySubscription = null;
     _controlPointCharacteristic = null;
+    _indoorBikeDataCharacteristic = null;
+    _latestTelemetry = null;
+    _staleTimer?.cancel();
+    _staleTimer = null;
     _hasControl = false;
     await super.disconnect();
   }
@@ -71,9 +92,6 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
       lowByte,
       highByte,
     ], requestOpcode: _setTargetPowerOpcode);
-
-    _currentPower = clamped;
-    _powerController.add(_currentPower);
   }
 
   @override
@@ -112,13 +130,51 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
         );
       },
     );
+    _indoorBikeDataCharacteristic = ftmsService.characteristics.firstWhere(
+      (characteristic) => _matchesUuid(characteristic.uuid, '2ad2'),
+      orElse: () {
+        final ids = ftmsService.characteristics
+            .map((characteristic) => characteristic.uuid.str128)
+            .join(', ');
+        throw Exception(
+          'FTMS Indoor Bike Data not found. Characteristics: [$ids]',
+        );
+      },
+    );
 
     _hasControl = false;
+    _latestTelemetry = null;
 
     final cp = _controlPointCharacteristic!;
     if (cp.properties.indicate || cp.properties.notify) {
       await cp.setNotifyValue(true);
     }
+
+    await _telemetrySubscription?.cancel();
+    _telemetrySubscription = null;
+
+    final telemetryCharacteristic = _indoorBikeDataCharacteristic!;
+    if (telemetryCharacteristic.properties.notify ||
+        telemetryCharacteristic.properties.indicate) {
+      await telemetryCharacteristic.setNotifyValue(true);
+    }
+
+    _telemetrySubscription = telemetryCharacteristic.onValueReceived.listen((
+      data,
+    ) {
+      final telemetry = parseIndoorBikeData(
+        data,
+        timestamp: DateTime.now(),
+      );
+      if (telemetry == null) {
+        return;
+      }
+
+      _latestTelemetry = telemetry;
+      _scheduleStaleTimer();
+      emitStatus(ConnectionStatus.connected);
+      _telemetryController.add(telemetry);
+    });
   }
 
   Future<void> _writeControlPoint(
@@ -149,6 +205,33 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
 
   bool _isControlPointResponseFor(List<int> value, int requestOpcode) {
     return value.length >= 3 && value[0] == 0x80 && value[1] == requestOpcode;
+  }
+
+  @override
+  void onStatusChanged(ConnectionStatus status) {
+    if (status == ConnectionStatus.disconnected) {
+      _staleTimer?.cancel();
+      _staleTimer = null;
+      _latestTelemetry = null;
+      _hasControl = false;
+    }
+  }
+
+  void _markAwaitingTelemetry() {
+    emitStatus(ConnectionStatus.connectedNoData);
+  }
+
+  void _scheduleStaleTimer() {
+    _staleTimer?.cancel();
+    _staleTimer = Timer(_staleThreshold, () {
+      if (currentStatus == ConnectionStatus.connected ||
+          currentStatus == ConnectionStatus.connectedNoData) {
+        logBleEvent('stale_detected', details: const <String, Object?>{
+          'device': 'trainer',
+        });
+        emitStatus(ConnectionStatus.connectedNoData);
+      }
+    });
   }
 
   bool _matchesUuid(Guid uuid, String shortId) {

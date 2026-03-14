@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:android_hrm_erg/src/domain/models/ble_device_info.dart';
 import 'package:android_hrm_erg/src/domain/models/connection_status.dart';
 import 'package:android_hrm_erg/src/domain/models/hr_sample.dart';
+import 'package:android_hrm_erg/src/domain/models/trainer_telemetry.dart';
 import 'package:android_hrm_erg/src/domain/repositories/hr_monitor_repository.dart';
 import 'package:android_hrm_erg/src/domain/repositories/trainer_repository.dart';
 
@@ -15,6 +16,13 @@ class FakeHrMonitorRepository implements HrMonitorRepository {
       StreamController<ConnectionStatus>.broadcast();
   final StreamController<HrSample> _hrSamplesController =
       StreamController<HrSample>.broadcast();
+  final List<BleDeviceInfo> scanResults = <BleDeviceInfo>[];
+
+  String? savedDeviceId;
+  int connectCalls = 0;
+  int disconnectCalls = 0;
+  int reconnectCalls = 0;
+  int scanCalls = 0;
 
   @override
   Stream<ConnectionStatus> get connectionStatus =>
@@ -29,21 +37,29 @@ class FakeHrMonitorRepository implements HrMonitorRepository {
     );
   }
 
+  void emitConnectionStatus(ConnectionStatus status) {
+    _connectionStatusController.add(status);
+  }
+
   @override
   Future<void> connect(String deviceId) async {
+    savedDeviceId = deviceId;
+    connectCalls += 1;
     _connectionStatusController.add(ConnectionStatus.connected);
   }
 
   @override
   Future<void> disconnect() async {
+    disconnectCalls += 1;
     _connectionStatusController.add(ConnectionStatus.disconnected);
   }
 
   @override
-  Future<String?> getSavedDeviceId() async => null;
+  Future<String?> getSavedDeviceId() async => savedDeviceId;
 
   @override
   Future<void> reconnect() async {
+    reconnectCalls += 1;
     _connectionStatusController.add(ConnectionStatus.connected);
   }
 
@@ -51,7 +67,8 @@ class FakeHrMonitorRepository implements HrMonitorRepository {
   Future<List<BleDeviceInfo>> scanForDevices({
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    return const <BleDeviceInfo>[];
+    scanCalls += 1;
+    return List<BleDeviceInfo>.of(scanResults);
   }
 }
 
@@ -62,39 +79,62 @@ class FakeTrainerRepository implements TrainerRepository {
 
   final StreamController<ConnectionStatus> _connectionStatusController =
       StreamController<ConnectionStatus>.broadcast();
-  final StreamController<int> _currentPowerController =
-      StreamController<int>.broadcast();
+  final StreamController<TrainerTelemetry> _telemetryController =
+      StreamController<TrainerTelemetry>.broadcast();
 
   final List<int> targetPowerWrites = <int>[];
+  final List<BleDeviceInfo> scanResults = <BleDeviceInfo>[];
+  bool autoEmitTelemetryOnSetTargetPower = true;
   int currentWatts = 0;
+  int? currentCadence;
+  String? savedDeviceId;
+  int connectCalls = 0;
+  int disconnectCalls = 0;
+  int reconnectCalls = 0;
+  int scanCalls = 0;
 
   @override
   Stream<ConnectionStatus> get connectionStatus =>
       _connectionStatusController.stream;
 
   @override
-  Stream<int> get currentPower => _currentPowerController.stream;
+  Stream<TrainerTelemetry> get telemetry => _telemetryController.stream;
 
-  void emitPower(int watts) {
+  void emitTelemetry(int watts, {int? cadence, DateTime? timestamp}) {
     currentWatts = watts;
-    _currentPowerController.add(watts);
+    currentCadence = cadence;
+    _telemetryController.add(
+      TrainerTelemetry(
+        powerWatts: watts,
+        cadenceRpm: cadence,
+        timestamp: timestamp ?? DateTime.now(),
+      ),
+    );
+  }
+
+  void emitConnectionStatus(ConnectionStatus status) {
+    _connectionStatusController.add(status);
   }
 
   @override
   Future<void> connect(String deviceId) async {
+    savedDeviceId = deviceId;
+    connectCalls += 1;
     _connectionStatusController.add(ConnectionStatus.connected);
   }
 
   @override
   Future<void> disconnect() async {
+    disconnectCalls += 1;
     _connectionStatusController.add(ConnectionStatus.disconnected);
   }
 
   @override
-  Future<String?> getSavedDeviceId() async => null;
+  Future<String?> getSavedDeviceId() async => savedDeviceId;
 
   @override
   Future<void> reconnect() async {
+    reconnectCalls += 1;
     _connectionStatusController.add(ConnectionStatus.connected);
   }
 
@@ -102,13 +142,16 @@ class FakeTrainerRepository implements TrainerRepository {
   Future<List<BleDeviceInfo>> scanForDevices({
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    return const <BleDeviceInfo>[];
+    scanCalls += 1;
+    return List<BleDeviceInfo>.of(scanResults);
   }
 
   @override
   Future<void> setTargetPower(int watts) async {
     currentWatts = watts;
     targetPowerWrites.add(watts);
-    _currentPowerController.add(watts);
+    if (autoEmitTelemetryOnSetTargetPower) {
+      emitTelemetry(watts, cadence: currentCadence);
+    }
   }
 }

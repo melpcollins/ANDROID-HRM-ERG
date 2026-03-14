@@ -2,9 +2,12 @@ import 'dart:async';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
+import '../../domain/models/connection_status.dart';
 import '../../domain/models/hr_sample.dart';
 import '../../domain/repositories/hr_monitor_repository.dart';
 import 'ble_device_repository_base.dart';
+import 'ble_event_logger.dart';
+import 'heart_rate_measurement_parser.dart';
 
 class HrMonitorBleRepository extends BleDeviceRepositoryBase
     implements HrMonitorRepository {
@@ -12,8 +15,11 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
     : _hrController = StreamController<HrSample>.broadcast(),
       super(nameMatcher: _isLikelyHrMonitor);
 
+  static const Duration _staleThreshold = Duration(seconds: 5);
+
   final StreamController<HrSample> _hrController;
   StreamSubscription<List<int>>? _hrNotificationSubscription;
+  Timer? _staleTimer;
 
   @override
   Stream<HrSample> get hrSamples => _hrController.stream;
@@ -21,22 +27,26 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
   @override
   Future<void> connect(String deviceId) async {
     await super.connect(deviceId);
-    await _subscribeToHeartRate(deviceId);
+    try {
+      await _subscribeToHeartRate(deviceId);
+      _markAwaitingFreshHr();
+    } catch (_) {
+      await super.disconnect();
+      rethrow;
+    }
   }
 
   @override
   Future<void> reconnect() async {
     await super.reconnect();
-    final savedId = await getSavedDeviceId();
-    if (savedId != null && savedId.isNotEmpty) {
-      await _subscribeToHeartRate(savedId);
-    }
   }
 
   @override
   Future<void> disconnect() async {
     await _hrNotificationSubscription?.cancel();
     _hrNotificationSubscription = null;
+    _staleTimer?.cancel();
+    _staleTimer = null;
     await super.disconnect();
   }
 
@@ -95,16 +105,15 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
     _hrNotificationSubscription = hrCharacteristic.onValueReceived.listen((
       data,
     ) {
-      if (data.isEmpty) {
-        return;
-      }
-
-      final bpm = _parseHeartRateMeasurement(data);
+      final bpm = parseHeartRateMeasurement(data);
       if (bpm <= 0) {
         return;
       }
 
-      _hrController.add(HrSample(bpm: bpm, timestamp: DateTime.now()));
+      final sample = HrSample(bpm: bpm, timestamp: DateTime.now());
+      _scheduleStaleTimer();
+      emitStatus(ConnectionStatus.connected);
+      _hrController.add(sample);
     });
   }
 
@@ -116,22 +125,29 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
         fullForm.contains('0000$normalized-0000-1000-8000-00805f9b34fb');
   }
 
-  int _parseHeartRateMeasurement(List<int> data) {
-    final flags = data[0];
-    final is16Bit = (flags & 0x01) != 0;
+  @override
+  void onStatusChanged(ConnectionStatus status) {
+    if (status == ConnectionStatus.disconnected) {
+      _staleTimer?.cancel();
+      _staleTimer = null;
+    }
+  }
 
-    if (is16Bit) {
-      if (data.length < 3) {
-        return 0;
+  void _markAwaitingFreshHr() {
+    emitStatus(ConnectionStatus.connectedNoData);
+  }
+
+  void _scheduleStaleTimer() {
+    _staleTimer?.cancel();
+    _staleTimer = Timer(_staleThreshold, () {
+      if (currentStatus == ConnectionStatus.connected ||
+          currentStatus == ConnectionStatus.connectedNoData) {
+        logBleEvent('stale_detected', details: const <String, Object?>{
+          'device': 'hrm',
+        });
+        emitStatus(ConnectionStatus.connectedNoData);
       }
-      return data[1] | (data[2] << 8);
-    }
-
-    if (data.length < 2) {
-      return 0;
-    }
-
-    return data[1];
+    });
   }
 
   static bool _isLikelyHrMonitor(String name) {

@@ -11,10 +11,16 @@ class ConnectSetupState extends Equatable {
     this.trainerDevices = const <BleDeviceInfo>[],
     this.selectedHrId,
     this.selectedTrainerId,
+    this.selectedHrName,
+    this.selectedTrainerName,
     this.hrError,
     this.trainerError,
     this.scanningHr = false,
     this.scanningTrainer = false,
+    this.permissionsGranted = false,
+    this.bluetoothEnabled = false,
+    this.permissionPermanentlyDenied = false,
+    this.readinessChecked = false,
   });
 
   final ConnectionStatus hrStatus;
@@ -23,10 +29,16 @@ class ConnectSetupState extends Equatable {
   final List<BleDeviceInfo> trainerDevices;
   final String? selectedHrId;
   final String? selectedTrainerId;
+  final String? selectedHrName;
+  final String? selectedTrainerName;
   final String? hrError;
   final String? trainerError;
   final bool scanningHr;
   final bool scanningTrainer;
+  final bool permissionsGranted;
+  final bool bluetoothEnabled;
+  final bool permissionPermanentlyDenied;
+  final bool readinessChecked;
 
   ConnectSetupState copyWith({
     ConnectionStatus? hrStatus,
@@ -35,10 +47,16 @@ class ConnectSetupState extends Equatable {
     List<BleDeviceInfo>? trainerDevices,
     String? selectedHrId,
     String? selectedTrainerId,
+    String? selectedHrName,
+    String? selectedTrainerName,
     String? hrError,
     String? trainerError,
     bool? scanningHr,
     bool? scanningTrainer,
+    bool? permissionsGranted,
+    bool? bluetoothEnabled,
+    bool? permissionPermanentlyDenied,
+    bool? readinessChecked,
     bool clearHrError = false,
     bool clearTrainerError = false,
   }) {
@@ -49,12 +67,19 @@ class ConnectSetupState extends Equatable {
       trainerDevices: trainerDevices ?? this.trainerDevices,
       selectedHrId: selectedHrId ?? this.selectedHrId,
       selectedTrainerId: selectedTrainerId ?? this.selectedTrainerId,
+      selectedHrName: selectedHrName ?? this.selectedHrName,
+      selectedTrainerName: selectedTrainerName ?? this.selectedTrainerName,
       hrError: clearHrError ? null : (hrError ?? this.hrError),
       trainerError: clearTrainerError
           ? null
           : (trainerError ?? this.trainerError),
       scanningHr: scanningHr ?? this.scanningHr,
       scanningTrainer: scanningTrainer ?? this.scanningTrainer,
+      permissionsGranted: permissionsGranted ?? this.permissionsGranted,
+      bluetoothEnabled: bluetoothEnabled ?? this.bluetoothEnabled,
+      permissionPermanentlyDenied:
+          permissionPermanentlyDenied ?? this.permissionPermanentlyDenied,
+      readinessChecked: readinessChecked ?? this.readinessChecked,
     );
   }
 
@@ -66,9 +91,15 @@ class ConnectSetupState extends Equatable {
     trainerDevices,
     selectedHrId,
     selectedTrainerId,
+    selectedHrName,
+    selectedTrainerName,
     hrError,
     trainerError,
     scanningHr,
     scanningTrainer,
+    permissionsGranted,
+    bluetoothEnabled,
+    permissionPermanentlyDenied,
+    readinessChecked,
   ];
 }

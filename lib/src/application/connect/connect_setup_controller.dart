@@ -2,23 +2,37 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../domain/models/ble_readiness.dart';
+import '../../domain/models/ble_device_info.dart';
+import '../../domain/models/connection_status.dart';
 import '../../domain/repositories/hr_monitor_repository.dart';
 import '../../domain/repositories/trainer_repository.dart';
+import '../../infrastructure/ble/ble_permission_service.dart';
+import '../../infrastructure/storage/device_selection_store.dart';
 import 'connect_setup_state.dart';
 
 class ConnectSetupController extends StateNotifier<ConnectSetupState> {
   ConnectSetupController({
     required HrMonitorRepository hrMonitorRepository,
     required TrainerRepository trainerRepository,
+    required BlePermissionService blePermissionService,
+    required DeviceSelectionStore deviceSelectionStore,
   }) : _hrMonitorRepository = hrMonitorRepository,
        _trainerRepository = trainerRepository,
+       _blePermissionService = blePermissionService,
+       _deviceSelectionStore = deviceSelectionStore,
        super(const ConnectSetupState());
 
   final HrMonitorRepository _hrMonitorRepository;
   final TrainerRepository _trainerRepository;
+  final BlePermissionService _blePermissionService;
+  final DeviceSelectionStore _deviceSelectionStore;
 
   StreamSubscription? _hrStatusSubscription;
   StreamSubscription? _trainerStatusSubscription;
+  StreamSubscription<bool>? _bluetoothEnabledSubscription;
+
+  bool _autoReconnectInProgress = false;
 
   Future<void> initialize() async {
     _hrStatusSubscription ??= _hrMonitorRepository.connectionStatus.listen((
@@ -32,41 +46,77 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     ) {
       state = state.copyWith(trainerStatus: status);
     });
+    _bluetoothEnabledSubscription ??= _blePermissionService
+        .bluetoothEnabledStream
+        .listen((enabled) {
+          final wasEnabled = state.bluetoothEnabled;
+          state = state.copyWith(
+            bluetoothEnabled: enabled,
+            readinessChecked: true,
+          );
+          if (!wasEnabled && enabled && state.permissionsGranted) {
+            unawaited(_attemptSavedReconnects());
+          }
+        });
 
     final hrId = await _hrMonitorRepository.getSavedDeviceId();
     final trainerId = await _trainerRepository.getSavedDeviceId();
+    final hrName = await _deviceSelectionStore.getHrMonitorName();
+    final trainerName = await _deviceSelectionStore.getTrainerName();
 
-    state = state.copyWith(selectedHrId: hrId, selectedTrainerId: trainerId);
+    state = state.copyWith(
+      selectedHrId: hrId,
+      selectedTrainerId: trainerId,
+      selectedHrName: hrName,
+      selectedTrainerName: trainerName,
+    );
 
-    await Future.wait<void>([
-      _attemptReconnect(
-        reconnect: reconnectHrMonitor,
-        hasSavedDevice: hrId != null && hrId.isNotEmpty,
-      ),
-      _attemptReconnect(
-        reconnect: reconnectTrainer,
-        hasSavedDevice: trainerId != null && trainerId.isNotEmpty,
-      ),
-    ]);
+    await _refreshBleReadiness(
+      requestPermissions: true,
+      reconnectIfReady: true,
+    );
   }
 
   Future<void> scanHrMonitors() async {
+    if (!await _ensureBleReady()) {
+      return;
+    }
+
     state = state.copyWith(scanningHr: true, clearHrError: true);
 
     try {
       final devices = await _hrMonitorRepository.scanForDevices();
       state = state.copyWith(hrDevices: devices, scanningHr: false);
+      await _refreshSavedNameFromDevices(
+        selectedId: state.selectedHrId,
+        currentName: state.selectedHrName,
+        devices: devices,
+        persistName: _deviceSelectionStore.saveHrMonitorName,
+        updateState: (name) => state = state.copyWith(selectedHrName: name),
+      );
     } catch (error) {
       state = state.copyWith(scanningHr: false, hrError: error.toString());
     }
   }
 
   Future<void> scanTrainers() async {
+    if (!await _ensureBleReady()) {
+      return;
+    }
+
     state = state.copyWith(scanningTrainer: true, clearTrainerError: true);
 
     try {
       final devices = await _trainerRepository.scanForDevices();
       state = state.copyWith(trainerDevices: devices, scanningTrainer: false);
+      await _refreshSavedNameFromDevices(
+        selectedId: state.selectedTrainerId,
+        currentName: state.selectedTrainerName,
+        devices: devices,
+        persistName: _deviceSelectionStore.saveTrainerName,
+        updateState: (name) =>
+            state = state.copyWith(selectedTrainerName: name),
+      );
     } catch (error) {
       state = state.copyWith(
         scanningTrainer: false,
@@ -76,26 +126,70 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
   }
 
   Future<void> connectHrMonitor(String deviceId) async {
+    if (!await _ensureBleReady()) {
+      return;
+    }
+
     state = state.copyWith(clearHrError: true);
     try {
       await _hrMonitorRepository.connect(deviceId);
-      state = state.copyWith(selectedHrId: deviceId);
+      final deviceName = _deviceNameFor(deviceId, state.hrDevices);
+      state = state.copyWith(
+        selectedHrId: deviceId,
+        selectedHrName: deviceName,
+      );
+      if (_hasFriendlyDeviceName(deviceName)) {
+        await _deviceSelectionStore.saveHrMonitorName(deviceName!);
+      }
     } catch (error) {
       state = state.copyWith(hrError: error.toString());
     }
   }
 
   Future<void> connectTrainer(String deviceId) async {
+    if (!await _ensureBleReady()) {
+      return;
+    }
+
     state = state.copyWith(clearTrainerError: true);
     try {
       await _trainerRepository.connect(deviceId);
-      state = state.copyWith(selectedTrainerId: deviceId);
+      final deviceName = _deviceNameFor(deviceId, state.trainerDevices);
+      state = state.copyWith(
+        selectedTrainerId: deviceId,
+        selectedTrainerName: deviceName,
+      );
+      if (_hasFriendlyDeviceName(deviceName)) {
+        await _deviceSelectionStore.saveTrainerName(deviceName!);
+      }
+    } catch (error) {
+      state = state.copyWith(trainerError: error.toString());
+    }
+  }
+
+  Future<void> disconnectHrMonitor() async {
+    state = state.copyWith(clearHrError: true);
+    try {
+      await _hrMonitorRepository.disconnect();
+    } catch (error) {
+      state = state.copyWith(hrError: error.toString());
+    }
+  }
+
+  Future<void> disconnectTrainer() async {
+    state = state.copyWith(clearTrainerError: true);
+    try {
+      await _trainerRepository.disconnect();
     } catch (error) {
       state = state.copyWith(trainerError: error.toString());
     }
   }
 
   Future<void> reconnectHrMonitor() async {
+    if (!await _ensureBleReady()) {
+      return;
+    }
+
     state = state.copyWith(clearHrError: true);
     try {
       await _hrMonitorRepository.reconnect();
@@ -106,12 +200,91 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
   }
 
   Future<void> reconnectTrainer() async {
+    if (!await _ensureBleReady()) {
+      return;
+    }
+
     state = state.copyWith(clearTrainerError: true);
     try {
       await _trainerRepository.reconnect();
     } catch (error) {
       state = state.copyWith(trainerError: error.toString());
       rethrow;
+    }
+  }
+
+  Future<void> requestBleAccess() async {
+    await _refreshBleReadiness(
+      requestPermissions: true,
+      reconnectIfReady: true,
+    );
+  }
+
+  Future<void> refreshBleReadiness() async {
+    await _refreshBleReadiness(
+      requestPermissions: false,
+      reconnectIfReady: true,
+    );
+  }
+
+  Future<void> openSystemSettings() async {
+    await _blePermissionService.openSystemSettings();
+  }
+
+  Future<bool> _ensureBleReady() async {
+    final readiness = await _refreshBleReadiness(requestPermissions: true);
+    return readiness.isReady;
+  }
+
+  Future<BleReadiness> _refreshBleReadiness({
+    required bool requestPermissions,
+    bool reconnectIfReady = false,
+  }) async {
+    final readiness = requestPermissions
+        ? await _blePermissionService.ensurePermissions()
+        : await _blePermissionService.checkStatus();
+
+    state = state.copyWith(
+      permissionsGranted: readiness.permissionsGranted,
+      bluetoothEnabled: readiness.bluetoothEnabled,
+      permissionPermanentlyDenied: readiness.permissionPermanentlyDenied,
+      readinessChecked: true,
+    );
+
+    if (readiness.isReady && reconnectIfReady) {
+      await _attemptSavedReconnects();
+    }
+
+    return readiness;
+  }
+
+  Future<void> _attemptSavedReconnects() async {
+    if (_autoReconnectInProgress ||
+        !state.permissionsGranted ||
+        !state.bluetoothEnabled) {
+      return;
+    }
+
+    _autoReconnectInProgress = true;
+    try {
+      await Future.wait<void>([
+        _attemptReconnect(
+          reconnect: reconnectHrMonitor,
+          hasSavedDevice:
+              state.selectedHrId != null &&
+              state.selectedHrId!.isNotEmpty &&
+              state.hrStatus == ConnectionStatus.disconnected,
+        ),
+        _attemptReconnect(
+          reconnect: reconnectTrainer,
+          hasSavedDevice:
+              state.selectedTrainerId != null &&
+              state.selectedTrainerId!.isNotEmpty &&
+              state.trainerStatus == ConnectionStatus.disconnected,
+        ),
+      ]);
+    } finally {
+      _autoReconnectInProgress = false;
     }
   }
 
@@ -135,10 +308,51 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     }
   }
 
+  Future<void> _refreshSavedNameFromDevices({
+    required String? selectedId,
+    required String? currentName,
+    required List<BleDeviceInfo> devices,
+    required Future<void> Function(String name) persistName,
+    required void Function(String name) updateState,
+  }) async {
+    if (selectedId == null || selectedId.isEmpty) {
+      return;
+    }
+
+    if (_hasFriendlyDeviceName(currentName)) {
+      return;
+    }
+
+    final resolvedName = _deviceNameFor(selectedId, devices);
+    if (!_hasFriendlyDeviceName(resolvedName)) {
+      return;
+    }
+
+    updateState(resolvedName!);
+    await persistName(resolvedName);
+  }
+
+  String? _deviceNameFor(String deviceId, List<BleDeviceInfo> devices) {
+    for (final device in devices) {
+      if (device.id == deviceId) {
+        return device.name;
+      }
+    }
+    return null;
+  }
+
+  bool _hasFriendlyDeviceName(String? name) {
+    if (name == null) {
+      return false;
+    }
+    return name.trim().isNotEmpty;
+  }
+
   @override
   void dispose() {
     _hrStatusSubscription?.cancel();
     _trainerStatusSubscription?.cancel();
+    _bluetoothEnabledSubscription?.cancel();
     super.dispose();
   }
 }

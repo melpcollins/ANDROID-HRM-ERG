@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../../domain/models/ble_device_info.dart';
 import '../../domain/models/connection_status.dart';
 import '../storage/device_selection_store.dart';
+import 'ble_event_logger.dart';
 
 typedef NameMatcher = bool Function(String name);
 
@@ -31,14 +33,20 @@ abstract class BleDeviceRepositoryBase {
     yield* _connectionController.stream;
   }
 
+  @protected
+  ConnectionStatus get currentStatus => _status;
+
   Future<List<BleDeviceInfo>> scanForDevices({
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    _emitStatus(ConnectionStatus.scanning);
+    logBleEvent('scan_started');
+    final previousStatus = _status;
+    emitStatus(ConnectionStatus.scanning);
 
     final Map<String, BleDeviceInfo> allDevices = <String, BleDeviceInfo>{};
     final Map<String, BleDeviceInfo> matchingDevices =
         <String, BleDeviceInfo>{};
+    final Set<String> discoveredDeviceIds = <String>{};
 
     final scanSubscription = FlutterBluePlus.scanResults.listen((results) {
       for (final result in results) {
@@ -47,6 +55,12 @@ abstract class BleDeviceRepositoryBase {
         final deviceInfo = BleDeviceInfo(id: id, name: name);
 
         allDevices[id] = deviceInfo;
+        if (discoveredDeviceIds.add(id)) {
+          logBleEvent('device_found', details: <String, Object?>{
+            'deviceId': id,
+            'name': name,
+          });
+        }
         if (_nameMatcher(name)) {
           matchingDevices[id] = deviceInfo;
         }
@@ -60,9 +74,10 @@ abstract class BleDeviceRepositoryBase {
       await scanSubscription.cancel();
     }
 
-    _emitStatus(
-      _device?.isConnected == true
-          ? ConnectionStatus.connected
+    emitStatus(
+      previousStatus == ConnectionStatus.connected ||
+              previousStatus == ConnectionStatus.connectedNoData
+          ? previousStatus
           : ConnectionStatus.disconnected,
     );
 
@@ -73,6 +88,10 @@ abstract class BleDeviceRepositoryBase {
     final devices = selected.toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
+    logBleEvent('scan_completed', details: <String, Object?>{
+      'count': devices.length,
+    });
+
     return devices;
   }
 
@@ -81,18 +100,19 @@ abstract class BleDeviceRepositoryBase {
 
     await _connectionSubscription?.cancel();
     _device = nextDevice;
-    _emitStatus(ConnectionStatus.connecting);
+    emitStatus(ConnectionStatus.connecting);
 
     _connectionSubscription = nextDevice.connectionState.listen((state) {
       switch (state) {
         case BluetoothConnectionState.connected:
-          _emitStatus(ConnectionStatus.connected);
+          emitStatus(ConnectionStatus.connectedNoData);
           break;
         case BluetoothConnectionState.disconnected:
-          _emitStatus(ConnectionStatus.disconnected);
+          _device = null;
+          emitStatus(ConnectionStatus.disconnected);
           break;
         case _:
-          _emitStatus(ConnectionStatus.connecting);
+          emitStatus(ConnectionStatus.connecting);
           break;
       }
     });
@@ -100,16 +120,20 @@ abstract class BleDeviceRepositoryBase {
     try {
       await nextDevice.connect(timeout: const Duration(seconds: 20));
       await persistSelectedDeviceId(deviceId);
-      _emitStatus(ConnectionStatus.connected);
+      logBleEvent('connected', details: <String, Object?>{'deviceId': deviceId});
+      emitStatus(ConnectionStatus.connectedNoData);
     } catch (_) {
-      _emitStatus(ConnectionStatus.disconnected);
+      emitStatus(ConnectionStatus.disconnected);
       rethrow;
     }
   }
 
   Future<void> disconnect() async {
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
     await _device?.disconnect();
-    _emitStatus(ConnectionStatus.disconnected);
+    _device = null;
+    emitStatus(ConnectionStatus.disconnected);
   }
 
   Future<void> reconnect() async {
@@ -118,8 +142,21 @@ abstract class BleDeviceRepositoryBase {
       return;
     }
 
-    _emitStatus(ConnectionStatus.reconnecting);
-    await connect(savedId);
+    logBleEvent('reconnect_started', details: <String, Object?>{
+      'deviceId': savedId,
+    });
+    emitStatus(ConnectionStatus.reconnecting);
+    try {
+      await connect(savedId);
+      logBleEvent('reconnect_success', details: <String, Object?>{
+        'deviceId': savedId,
+      });
+    } catch (_) {
+      logBleEvent('reconnect_failed', details: <String, Object?>{
+        'deviceId': savedId,
+      });
+      rethrow;
+    }
   }
 
   Future<String?> getSavedDeviceId();
@@ -130,12 +167,17 @@ abstract class BleDeviceRepositoryBase {
 
   BluetoothDevice? get connectedDevice => _device;
 
-  void _emitStatus(ConnectionStatus status) {
+  @protected
+  void emitStatus(ConnectionStatus status) {
     _status = status;
+    onStatusChanged(status);
     if (!_connectionController.isClosed) {
       _connectionController.add(status);
     }
   }
+
+  @protected
+  void onStatusChanged(ConnectionStatus status) {}
 
   String _bestDeviceName(ScanResult result) {
     final candidates = <String>[

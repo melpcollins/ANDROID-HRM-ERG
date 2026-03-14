@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 
+import '../../domain/models/connection_status.dart';
 import '../../domain/models/pause_reason.dart';
 import '../../domain/models/workout_config.dart';
 import '../../domain/models/workout_phase.dart';
@@ -13,11 +14,13 @@ class WorkoutSessionState extends Equatable {
     this.phase = WorkoutPhase.idle,
     this.pauseReason,
     this.phaseBeforePause,
-    this.hrConnected = false,
-    this.trainerConnected = false,
+    this.hrStatus = ConnectionStatus.disconnected,
+    this.trainerStatus = ConnectionStatus.disconnected,
     this.currentHr,
     this.averageHr,
     this.currentPower,
+    this.displayPower,
+    this.currentCadence,
     this.targetHr,
     this.lastAdjustmentWatts,
     this.totalDuration,
@@ -33,11 +36,13 @@ class WorkoutSessionState extends Equatable {
   final WorkoutPhase phase;
   final PauseReason? pauseReason;
   final WorkoutPhase? phaseBeforePause;
-  final bool hrConnected;
-  final bool trainerConnected;
+  final ConnectionStatus hrStatus;
+  final ConnectionStatus trainerStatus;
   final int? currentHr;
   final double? averageHr;
   final int? currentPower;
+  final int? displayPower;
+  final int? currentCadence;
   final int? targetHr;
   final int? lastAdjustmentWatts;
   final Duration? totalDuration;
@@ -51,6 +56,14 @@ class WorkoutSessionState extends Equatable {
       phase != WorkoutPhase.idle && phase != WorkoutPhase.completed;
   bool get isPaused => phase == WorkoutPhase.paused;
   bool get isCompleted => phase == WorkoutPhase.completed;
+  bool get hrConnected =>
+      hrStatus == ConnectionStatus.connected ||
+      hrStatus == ConnectionStatus.connectedNoData;
+  bool get trainerConnected =>
+      trainerStatus == ConnectionStatus.connected ||
+      trainerStatus == ConnectionStatus.connectedNoData;
+  bool get hrFresh => hrStatus == ConnectionStatus.connected;
+  bool get trainerFresh => trainerStatus == ConnectionStatus.connected;
 
   WorkoutSessionState copyWith({
     WorkoutType? selectedWorkoutType,
@@ -58,11 +71,13 @@ class WorkoutSessionState extends Equatable {
     WorkoutPhase? phase,
     PauseReason? pauseReason,
     WorkoutPhase? phaseBeforePause,
-    bool? hrConnected,
-    bool? trainerConnected,
+    ConnectionStatus? hrStatus,
+    ConnectionStatus? trainerStatus,
     int? currentHr,
     double? averageHr,
     int? currentPower,
+    int? displayPower,
+    int? currentCadence,
     int? targetHr,
     int? lastAdjustmentWatts,
     Duration? totalDuration,
@@ -71,6 +86,7 @@ class WorkoutSessionState extends Equatable {
     WorkoutSummary? provisionalSummary,
     WorkoutSummary? summary,
     String? error,
+    bool clearCurrentCadence = false,
     bool clearProvisionalSummary = false,
     bool clearSummary = false,
     bool clearError = false,
@@ -85,11 +101,15 @@ class WorkoutSessionState extends Equatable {
       phaseBeforePause: clearPhaseBeforePause
           ? null
           : (phaseBeforePause ?? this.phaseBeforePause),
-      hrConnected: hrConnected ?? this.hrConnected,
-      trainerConnected: trainerConnected ?? this.trainerConnected,
+      hrStatus: hrStatus ?? this.hrStatus,
+      trainerStatus: trainerStatus ?? this.trainerStatus,
       currentHr: currentHr ?? this.currentHr,
       averageHr: averageHr ?? this.averageHr,
       currentPower: currentPower ?? this.currentPower,
+      displayPower: displayPower ?? this.displayPower,
+      currentCadence: clearCurrentCadence
+          ? null
+          : (currentCadence ?? this.currentCadence),
       targetHr: targetHr ?? this.targetHr,
       lastAdjustmentWatts: lastAdjustmentWatts ?? this.lastAdjustmentWatts,
       totalDuration: totalDuration ?? this.totalDuration,
@@ -110,11 +130,13 @@ class WorkoutSessionState extends Equatable {
     phase,
     pauseReason,
     phaseBeforePause,
-    hrConnected,
-    trainerConnected,
+    hrStatus,
+    trainerStatus,
     currentHr,
     averageHr,
     currentPower,
+    displayPower,
+    currentCadence,
     targetHr,
     lastAdjustmentWatts,
     totalDuration,

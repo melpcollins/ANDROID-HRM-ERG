@@ -1,24 +1,35 @@
 import 'package:android_hrm_erg/src/app.dart';
 import 'package:android_hrm_erg/src/app/providers.dart';
+import 'package:android_hrm_erg/src/domain/models/ble_readiness.dart';
+import 'package:android_hrm_erg/src/domain/models/connection_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/fake_ble_permission_service.dart';
 import 'support/fake_repositories.dart';
 
 void main() {
   Finder findTextFieldByLabel(String label) {
-    return find.ancestor(of: find.text(label), matching: find.byType(TextField));
+    return find.ancestor(
+      of: find.text(label),
+      matching: find.byType(TextField),
+    );
   }
 
   Future<void> pumpApp(
     WidgetTester tester, {
     required FakeHrMonitorRepository hrRepo,
     required FakeTrainerRepository trainerRepo,
+    FakeBlePermissionService? permissionService,
     Map<String, Object> mockPrefs = const <String, Object>{},
     Size physicalSize = const Size(1200, 2200),
+    bool autoConnectDevices = true,
   }) async {
+    final blePermissionService =
+        permissionService ?? FakeBlePermissionService();
+    addTearDown(blePermissionService.dispose);
     SharedPreferences.setMockInitialValues(mockPrefs);
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = physicalSize;
@@ -32,14 +43,17 @@ void main() {
         overrides: [
           hrMonitorRepositoryProvider.overrideWithValue(hrRepo),
           trainerRepositoryProvider.overrideWithValue(trainerRepo),
+          blePermissionServiceProvider.overrideWithValue(blePermissionService),
         ],
         child: const HrmErgApp(),
       ),
     );
     await tester.pump();
-    await hrRepo.reconnect();
-    await trainerRepo.reconnect();
-    await tester.pump();
+    if (autoConnectDevices) {
+      await hrRepo.reconnect();
+      await trainerRepo.reconnect();
+      await tester.pump();
+    }
   }
 
   testWidgets('shows HR-ERG setup fields by default', (
@@ -79,7 +93,10 @@ void main() {
     expect(find.text('Assessment Power'), findsOneWidget);
     expect(find.textContaining('Fixed protocol'), findsOneWidget);
     expect(find.text('Starting Watts'), findsNothing);
-    expect(find.byKey(const ValueKey('selected-workout-type-row')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('selected-workout-type-row')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('switches to Power-ERG and shows its setup fields', (
@@ -125,6 +142,26 @@ void main() {
     expect(find.text('Target -5'), findsOneWidget);
     expect(find.text('Target +5'), findsOneWidget);
     expect(find.text('01:00:00'), findsOneWidget);
+  });
+
+  testWidgets('live HR-ERG metrics show target HR above power and cadence', (
+    WidgetTester tester,
+  ) async {
+    final hrRepo = FakeHrMonitorRepository();
+    final trainerRepo = FakeTrainerRepository()..currentCadence = 88;
+    await pumpApp(tester, hrRepo: hrRepo, trainerRepo: trainerRepo);
+
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+
+    final hrTop = tester.getTopLeft(find.text('HR')).dy;
+    final targetHrTop = tester.getTopLeft(find.text('Target HR')).dy;
+    final powerTop = tester.getTopLeft(find.text('Power (10s avg)')).dy;
+    final cadenceTop = tester.getTopLeft(find.text('Cadence')).dy;
+
+    expect(targetHrTop, greaterThan(hrTop));
+    expect(powerTop, greaterThan(targetHrTop));
+    expect(cadenceTop, greaterThan(powerTop));
   });
 
   testWidgets('workout setup collapses on start and reopens on stop', (
@@ -268,16 +305,18 @@ void main() {
       hrRepo: FakeHrMonitorRepository(),
       trainerRepo: FakeTrainerRepository(),
       mockPrefs: await SharedPreferences.getInstance().then(
-        (prefs) => Map<String, Object>.from(prefs.getKeys().fold<Map<String, Object>>(
-          <String, Object>{},
-          (values, key) {
+        (prefs) => Map<String, Object>.from(
+          prefs.getKeys().fold<Map<String, Object>>(<String, Object>{}, (
+            values,
+            key,
+          ) {
             final value = prefs.get(key);
             if (value != null) {
               values[key] = value;
             }
             return values;
-          },
-        )),
+          }),
+        ),
       ),
     );
 
@@ -292,5 +331,136 @@ void main() {
 
     expect(startingWattsField.controller?.text, '84');
     expect(targetHrField.controller?.text, '118');
+  });
+
+  testWidgets('shows permission guidance when Bluetooth access is denied', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+      permissionService: FakeBlePermissionService(
+        initialReadiness: const BleReadiness(
+          permissionsGranted: false,
+          bluetoothEnabled: true,
+        ),
+      ),
+      autoConnectDevices: false,
+    );
+
+    expect(find.text('Bluetooth Access Needed'), findsOneWidget);
+    expect(find.text('Grant access'), findsOneWidget);
+  });
+
+  testWidgets('shows Bluetooth-off guidance when adapter is disabled', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+      permissionService: FakeBlePermissionService(
+        initialReadiness: const BleReadiness(
+          permissionsGranted: true,
+          bluetoothEnabled: false,
+        ),
+      ),
+      autoConnectDevices: false,
+    );
+
+    expect(find.text('Bluetooth Is Off'), findsOneWidget);
+    expect(find.text('Check again'), findsOneWidget);
+  });
+
+  testWidgets('shows connected-without-data labels for device sections', (
+    WidgetTester tester,
+  ) async {
+    final hrRepo = FakeHrMonitorRepository();
+    final trainerRepo = FakeTrainerRepository();
+    await pumpApp(
+      tester,
+      hrRepo: hrRepo,
+      trainerRepo: trainerRepo,
+      autoConnectDevices: false,
+    );
+
+    hrRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
+    trainerRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Connected (no HR data)'), findsOneWidget);
+    expect(find.text('Connected (no response)'), findsOneWidget);
+  });
+
+  testWidgets(
+    'connected-without-data devices expand to show reconnection actions',
+    (WidgetTester tester) async {
+      final hrRepo = FakeHrMonitorRepository()..savedDeviceId = 'hr-1';
+      final trainerRepo = FakeTrainerRepository()..savedDeviceId = 'trainer-1';
+      await pumpApp(tester, hrRepo: hrRepo, trainerRepo: trainerRepo);
+
+      hrRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
+      trainerRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Connected (no HR data)'), findsOneWidget);
+      expect(find.text('Connected (no response)'), findsOneWidget);
+      expect(find.text('Reconnect saved'), findsNWidgets(2));
+      expect(find.text('Disconnect'), findsNWidgets(2));
+    },
+  );
+
+  testWidgets('shows friendly saved device names instead of IDs', (
+    WidgetTester tester,
+  ) async {
+    final hrRepo = FakeHrMonitorRepository()..savedDeviceId = 'C3:E7:00:11';
+    final trainerRepo = FakeTrainerRepository()..savedDeviceId = 'C3:E7:22:33';
+    await pumpApp(
+      tester,
+      hrRepo: hrRepo,
+      trainerRepo: trainerRepo,
+      autoConnectDevices: false,
+      permissionService: FakeBlePermissionService(
+        initialReadiness: const BleReadiness(
+          permissionsGranted: false,
+          bluetoothEnabled: true,
+        ),
+      ),
+      mockPrefs: const <String, Object>{
+        'selected_hr_monitor_name': 'Polar H10',
+        'selected_trainer_name': 'wattbikeAtom260160812',
+      },
+    );
+
+    expect(find.text('Saved device: Polar H10'), findsOneWidget);
+    expect(find.text('Saved device: wattbikeAtom260160812'), findsOneWidget);
+    expect(find.text('Saved device: C3:E7:00:11'), findsNothing);
+    expect(find.text('Saved device: C3:E7:22:33'), findsNothing);
+  });
+
+  testWidgets('shows disconnect buttons for saved devices', (
+    WidgetTester tester,
+  ) async {
+    final hrRepo = FakeHrMonitorRepository()..savedDeviceId = 'hr-1';
+    final trainerRepo = FakeTrainerRepository()..savedDeviceId = 'trainer-1';
+    await pumpApp(
+      tester,
+      hrRepo: hrRepo,
+      trainerRepo: trainerRepo,
+      autoConnectDevices: false,
+      permissionService: FakeBlePermissionService(
+        initialReadiness: const BleReadiness(
+          permissionsGranted: false,
+          bluetoothEnabled: true,
+        ),
+      ),
+      mockPrefs: const <String, Object>{
+        'selected_hr_monitor_name': 'Polar H10',
+        'selected_trainer_name': 'wattbikeAtom260160812',
+      },
+    );
+
+    expect(find.text('Disconnect'), findsNWidgets(2));
   });
 }

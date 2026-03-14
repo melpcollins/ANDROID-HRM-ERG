@@ -1,7 +1,9 @@
 import 'package:android_hrm_erg/src/application/session/power_adjustment_policy.dart';
 import 'package:android_hrm_erg/src/application/session/workout_analytics.dart';
 import 'package:android_hrm_erg/src/application/session/workout_session_controller.dart';
+import 'package:android_hrm_erg/src/domain/models/connection_status.dart';
 import 'package:android_hrm_erg/src/domain/models/hr_sample.dart';
+import 'package:android_hrm_erg/src/domain/models/pause_reason.dart';
 import 'package:android_hrm_erg/src/domain/models/power_sample.dart';
 import 'package:android_hrm_erg/src/domain/models/workout_config.dart';
 import 'package:android_hrm_erg/src/domain/models/workout_phase.dart';
@@ -135,44 +137,6 @@ void main() {
       });
     });
 
-    test('HR-ERG provisional durability appears after 30 minutes', () {
-      fakeAsync((async) {
-        final clock = async.getClock(DateTime(2026, 1, 1, 8));
-        final hrRepo = FakeHrMonitorRepository();
-        final trainerRepo = FakeTrainerRepository();
-        final controller = WorkoutSessionController(
-          hrMonitorRepository: hrRepo,
-          trainerRepository: trainerRepo,
-          nowProvider: () => clock.now(),
-        )..initialize();
-
-        connectDevices(hrRepo, trainerRepo);
-        async.flushMicrotasks();
-
-        controller.startWorkout(
-          const HrErgConfig(
-            startingWatts: 180,
-            targetHr: 130,
-            loopSeconds: 5,
-            duration: Duration(minutes: 60),
-          ),
-        );
-        async.flushMicrotasks();
-
-        for (var tick = 0; tick < 450; tick++) {
-          hrRepo.emitHr(130, timestamp: clock.now());
-          trainerRepo.emitPower(180);
-          async.flushMicrotasks();
-          async.elapse(const Duration(seconds: 4));
-          async.flushMicrotasks();
-        }
-
-        expect(controller.state.provisionalSummary, isNotNull);
-        expect(controller.state.provisionalSummary!.analysisAvailable, isTrue);
-        expect(controller.state.provisionalSummary!.provisional, isTrue);
-      });
-    });
-
     test('assessment transitions warm-up, steady block, cooldown, and complete', () {
       fakeAsync((async) {
         final hrRepo = FakeHrMonitorRepository();
@@ -277,6 +241,61 @@ void main() {
       });
     });
 
+    test('Power-ERG pauses when trainer telemetry stalls and resumes on recovery', () {
+      fakeAsync((async) {
+        final clock = async.getClock(DateTime(2026, 1, 1, 8));
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = WorkoutSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+          nowProvider: () => clock.now(),
+        )..initialize();
+
+        connectDevices(hrRepo, trainerRepo);
+        async.flushMicrotasks();
+
+        controller.startWorkout(
+          PowerErgConfig(
+            targetPower: 180,
+            maxHr: 150,
+            activeDuration: const Duration(minutes: 30),
+          ),
+        );
+        async.flushMicrotasks();
+
+        hrRepo.emitHr(145, timestamp: clock.now());
+        async.flushMicrotasks();
+        async.elapse(const Duration(minutes: 10));
+        async.flushMicrotasks();
+
+        trainerRepo.autoEmitTelemetryOnSetTargetPower = false;
+        trainerRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
+        async.flushMicrotasks();
+
+        final writesBeforePause = trainerRepo.targetPowerWrites.length;
+        hrRepo.emitHr(151, timestamp: clock.now());
+        async.flushMicrotasks();
+
+        expect(controller.state.phase, WorkoutPhase.paused);
+        expect(controller.state.pauseReason, PauseReason.trainerStale);
+
+        async.elapse(const Duration(seconds: 20));
+        hrRepo.emitHr(151, timestamp: clock.now());
+        async.flushMicrotasks();
+        expect(trainerRepo.targetPowerWrites.length, writesBeforePause);
+
+        trainerRepo.autoEmitTelemetryOnSetTargetPower = true;
+        trainerRepo.emitConnectionStatus(ConnectionStatus.connected);
+        trainerRepo.emitTelemetry(180, timestamp: clock.now());
+        hrRepo.emitHr(145, timestamp: clock.now());
+        async.flushMicrotasks();
+
+        expect(controller.state.phase, WorkoutPhase.active);
+        expect(controller.state.pauseReason, isNull);
+      });
+    });
+
     test('Power-ERG provisional aerobic drift appears after 30 minutes', () {
       fakeAsync((async) {
         final clock = async.getClock(DateTime(2026, 1, 1, 8));
@@ -302,7 +321,7 @@ void main() {
 
         for (var tick = 0; tick < 450; tick++) {
           hrRepo.emitHr(135, timestamp: clock.now());
-          trainerRepo.emitPower(180);
+          trainerRepo.emitTelemetry(180, timestamp: clock.now());
           async.flushMicrotasks();
           async.elapse(const Duration(seconds: 4));
           async.flushMicrotasks();
@@ -339,7 +358,7 @@ void main() {
 
         for (var tick = 0; tick < 750; tick++) {
           hrRepo.emitHr(135, timestamp: clock.now());
-          trainerRepo.emitPower(180);
+          trainerRepo.emitTelemetry(180, timestamp: clock.now());
           async.flushMicrotasks();
           async.elapse(const Duration(seconds: 4));
           async.flushMicrotasks();
@@ -483,6 +502,29 @@ void main() {
       );
 
       expect(summary.analysisAvailable, isFalse);
+      expect(summary.provisional, isTrue);
+    });
+
+    test('HR-ERG provisional durability is available after 30 minutes', () {
+      final analytics = const WorkoutAnalytics();
+      final start = DateTime(2026, 1, 1, 9);
+
+      final summary = analytics.summarizeHrErgProvisional(
+        hrSamples: hrWindowSamples(
+          start: start,
+          end: start.add(const Duration(minutes: 35)),
+          bpm: 130,
+        ),
+        powerSamples: powerWindowSamples(
+          start: start,
+          end: start.add(const Duration(minutes: 35)),
+          watts: 180,
+        ),
+        rideStart: start,
+        analysisEnd: start.add(const Duration(minutes: 35)),
+      );
+
+      expect(summary.analysisAvailable, isTrue);
       expect(summary.provisional, isTrue);
     });
 

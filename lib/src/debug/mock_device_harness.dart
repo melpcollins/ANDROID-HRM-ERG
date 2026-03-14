@@ -3,6 +3,7 @@ import 'dart:async';
 import '../domain/models/ble_device_info.dart';
 import '../domain/models/connection_status.dart';
 import '../domain/models/hr_sample.dart';
+import '../domain/models/trainer_telemetry.dart';
 import '../domain/repositories/hr_monitor_repository.dart';
 import '../domain/repositories/trainer_repository.dart';
 
@@ -36,6 +37,24 @@ class MockDeviceHarness {
 
   void emitHr(int bpm) {
     hrMonitorRepository.emitHr(bpm);
+  }
+
+  void emitTrainerTelemetry(int watts, {int? cadence}) {
+    trainerRepository.emitTelemetry(watts, cadence: cadence);
+  }
+
+  void stopTrainerTelemetry() {
+    trainerRepository.autoEmitTelemetryOnSetTargetPower = false;
+    trainerRepository.emitConnectionStatus(ConnectionStatus.connectedNoData);
+  }
+
+  void resumeTrainerTelemetry() {
+    trainerRepository.autoEmitTelemetryOnSetTargetPower = true;
+    trainerRepository.emitConnectionStatus(ConnectionStatus.connected);
+    trainerRepository.emitTelemetry(
+      trainerRepository.currentWatts,
+      cadence: trainerRepository.currentCadence,
+    );
   }
 
   void reset() {
@@ -76,6 +95,10 @@ class MockHrMonitorRepository implements HrMonitorRepository {
     _hrSamplesController.add(
       HrSample(bpm: bpm, timestamp: timestamp ?? _now()),
     );
+  }
+
+  void emitConnectionStatus(ConnectionStatus status) {
+    _connectionStatusController.add(status);
   }
 
   @override
@@ -129,24 +152,47 @@ class MockTrainerRepository implements TrainerRepository {
 
   final StreamController<ConnectionStatus> _connectionStatusController =
       StreamController<ConnectionStatus>.broadcast();
-  final StreamController<int> _currentPowerController =
-      StreamController<int>.broadcast();
+  final StreamController<TrainerTelemetry> _telemetryController =
+      StreamController<TrainerTelemetry>.broadcast();
 
   final List<int> targetPowerWrites = <int>[];
   String? _savedDeviceId;
   int _currentWatts = 0;
+  int? _currentCadence;
+  bool autoEmitTelemetryOnSetTargetPower = true;
 
   @override
   Stream<ConnectionStatus> get connectionStatus =>
       _connectionStatusController.stream;
 
   @override
-  Stream<int> get currentPower async* {
-    yield _currentWatts;
-    yield* _currentPowerController.stream;
+  Stream<TrainerTelemetry> get telemetry async* {
+    yield TrainerTelemetry(
+      powerWatts: _currentWatts,
+      cadenceRpm: _currentCadence,
+      timestamp: DateTime.now(),
+    );
+    yield* _telemetryController.stream;
   }
 
   int get currentWatts => _currentWatts;
+  int? get currentCadence => _currentCadence;
+
+  void emitConnectionStatus(ConnectionStatus status) {
+    _connectionStatusController.add(status);
+  }
+
+  void emitTelemetry(int watts, {int? cadence, DateTime? timestamp}) {
+    _currentWatts = watts;
+    _currentCadence = cadence;
+    _telemetryController.add(
+      TrainerTelemetry(
+        powerWatts: watts,
+        cadenceRpm: cadence,
+        timestamp: timestamp ?? DateTime.now(),
+      ),
+    );
+  }
 
   @override
   Future<void> connect(String deviceId) async {
@@ -183,19 +229,23 @@ class MockTrainerRepository implements TrainerRepository {
   Future<void> setTargetPower(int watts) async {
     _currentWatts = watts;
     targetPowerWrites.add(watts);
-    _currentPowerController.add(watts);
+    if (autoEmitTelemetryOnSetTargetPower) {
+      emitTelemetry(watts, cadence: _currentCadence);
+    }
   }
 
   void reset() {
     _savedDeviceId = null;
     _currentWatts = 0;
+    _currentCadence = null;
+    autoEmitTelemetryOnSetTargetPower = true;
     targetPowerWrites.clear();
     _connectionStatusController.add(ConnectionStatus.disconnected);
-    _currentPowerController.add(_currentWatts);
+    emitTelemetry(_currentWatts);
   }
 
   void dispose() {
     _connectionStatusController.close();
-    _currentPowerController.close();
+    _telemetryController.close();
   }
 }

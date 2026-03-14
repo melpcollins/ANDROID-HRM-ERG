@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'application/connect/connect_setup_controller.dart';
+import 'application/connect/connect_setup_state.dart';
 import 'application/session/workout_session_controller.dart';
 import 'application/session/workout_session_state.dart';
 import 'app/providers.dart';
@@ -91,7 +93,9 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     final connectState = ref.watch(connectSetupControllerProvider);
     final connectController = ref.read(connectSetupControllerProvider.notifier);
     final sessionState = ref.watch(workoutSessionControllerProvider);
-    final sessionController = ref.read(workoutSessionControllerProvider.notifier);
+    final sessionController = ref.read(
+      workoutSessionControllerProvider.notifier,
+    );
     MockWorkoutDebugState? mockState;
     MockWorkoutDebugController? mockController;
     if (debugConfig.useMockDevices) {
@@ -130,7 +134,9 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
         });
       }
 
-      if (previous?.isRunning == true && !next.isRunning && !_showWorkoutSetup) {
+      if (previous?.isRunning == true &&
+          !next.isRunning &&
+          !_showWorkoutSetup) {
         setState(() {
           _showWorkoutSetup = true;
         });
@@ -150,6 +156,15 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
             ),
             const SizedBox(height: 16),
           ],
+          _buildBleReadinessCard(
+            context,
+            connectState: connectState,
+            connectController: connectController,
+          ),
+          if (connectState.readinessChecked &&
+              (!connectState.permissionsGranted ||
+                  !connectState.bluetoothEnabled))
+            const SizedBox(height: 16),
           _buildDeviceCards(
             context,
             connectState: connectState,
@@ -185,8 +200,77 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     if (isRunning) {
       return false;
     }
+    if (!connectState.permissionsGranted || !connectState.bluetoothEnabled) {
+      return false;
+    }
     return connectState.hrStatus == ConnectionStatus.connected &&
         connectState.trainerStatus == ConnectionStatus.connected;
+  }
+
+  Widget _buildBleReadinessCard(
+    BuildContext context, {
+    required ConnectSetupState connectState,
+    required ConnectSetupController connectController,
+  }) {
+    if (!connectState.readinessChecked ||
+        (connectState.permissionsGranted && connectState.bluetoothEnabled)) {
+      return const SizedBox.shrink();
+    }
+
+    final String title;
+    final String body;
+    final List<Widget> actions;
+
+    if (!connectState.permissionsGranted) {
+      title = 'Bluetooth Access Needed';
+      body = connectState.permissionPermanentlyDenied
+          ? 'Bluetooth permissions are blocked. Open system settings, grant access, then return here.'
+          : 'Bluetooth permissions are required before the app can scan, reconnect, or start a ride.';
+      actions = <Widget>[
+        FilledButton(
+          onPressed: connectState.permissionPermanentlyDenied
+              ? connectController.openSystemSettings
+              : connectController.requestBleAccess,
+          child: Text(
+            connectState.permissionPermanentlyDenied
+                ? 'Open settings'
+                : 'Grant access',
+          ),
+        ),
+        if (connectState.permissionPermanentlyDenied)
+          OutlinedButton(
+            onPressed: connectController.refreshBleReadiness,
+            child: const Text('Check again'),
+          ),
+      ];
+    } else {
+      title = 'Bluetooth Is Off';
+      body =
+          'Turn Bluetooth on in Android settings, then tap Check again before scanning or reconnecting devices.';
+      actions = <Widget>[
+        FilledButton(
+          onPressed: connectController.refreshBleReadiness,
+          child: const Text('Check again'),
+        ),
+      ];
+    }
+
+    return Card(
+      color: Colors.amber.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(body),
+            const SizedBox(height: 12),
+            Wrap(spacing: 8, runSpacing: 8, children: actions),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildWorkoutTypeCard(
@@ -232,19 +316,15 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
             _WorkoutTypeOption(
               label: 'HR-ERG',
               selected: selectedType == WorkoutType.hrErg,
-              onTap: () => _selectWorkoutType(
-                sessionController,
-                WorkoutType.hrErg,
-              ),
+              onTap: () =>
+                  _selectWorkoutType(sessionController, WorkoutType.hrErg),
             ),
             const SizedBox(height: 8),
             _WorkoutTypeOption(
               label: 'Power-ERG',
               selected: selectedType == WorkoutType.powerErg,
-              onTap: () => _selectWorkoutType(
-                sessionController,
-                WorkoutType.powerErg,
-              ),
+              onTap: () =>
+                  _selectWorkoutType(sessionController, WorkoutType.powerErg),
             ),
             const SizedBox(height: 8),
             _WorkoutTypeOption(
@@ -291,6 +371,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       title: 'HR Monitor',
       status: connectState.hrStatus,
       selectedDeviceId: connectState.selectedHrId,
+      selectedDeviceName: connectState.selectedHrName,
       devices: connectState.hrDevices,
       isScanning: connectState.scanningHr,
       error: connectState.hrError,
@@ -302,6 +383,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       },
       onScan: connectController.scanHrMonitors,
       onReconnectSaved: connectController.reconnectHrMonitor,
+      onDisconnect: connectController.disconnectHrMonitor,
       onConnect: connectController.connectHrMonitor,
       compact:
           connectState.hrStatus == ConnectionStatus.connected &&
@@ -314,6 +396,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       title: 'Trainer',
       status: connectState.trainerStatus,
       selectedDeviceId: connectState.selectedTrainerId,
+      selectedDeviceName: connectState.selectedTrainerName,
       devices: connectState.trainerDevices,
       isScanning: connectState.scanningTrainer,
       error: connectState.trainerError,
@@ -325,6 +408,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       },
       onScan: connectController.scanTrainers,
       onReconnectSaved: connectController.reconnectTrainer,
+      onDisconnect: connectController.disconnectTrainer,
       onConnect: connectController.connectTrainer,
       compact:
           connectState.hrStatus == ConnectionStatus.connected &&
@@ -352,11 +436,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     }
 
     return Column(
-      children: [
-        hrSection,
-        const SizedBox(height: 16),
-        trainerSection,
-      ],
+      children: [hrSection, const SizedBox(height: 16), trainerSection],
     );
   }
 
@@ -401,113 +481,113 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
             if (showSetupDetails) ...[
               const SizedBox(height: 12),
               if (selectedType == WorkoutType.hrErg) ...[
-              TextField(
-                controller: _startingWattsController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Starting Watts',
-                  border: OutlineInputBorder(),
+                TextField(
+                  controller: _startingWattsController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Starting Watts',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _targetHrController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Target Heart Rate',
-                  border: OutlineInputBorder(),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _targetHrController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Target Heart Rate',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _durationHoursController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Duration Hours',
-                        border: OutlineInputBorder(),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _durationHoursController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Duration Hours',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _durationMinutesController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Duration Minutes',
-                        border: OutlineInputBorder(),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _durationMinutesController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Duration Minutes',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text('Control defaults: 10s HR average, 5s loop.'),
+              ] else if (selectedType == WorkoutType.powerErg) ...[
+                TextField(
+                  controller: _powerErgPowerController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Target Power',
+                    border: OutlineInputBorder(),
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Text('Control defaults: 10s HR average, 5s loop.'),
-            ] else if (selectedType == WorkoutType.powerErg) ...[
-              TextField(
-                controller: _powerErgPowerController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Target Power',
-                  border: OutlineInputBorder(),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _powerErgMaxHrController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Max Heart Rate',
-                  border: OutlineInputBorder(),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _powerErgMaxHrController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Max Heart Rate',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _powerErgDurationHoursController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Duration Hours',
-                        border: OutlineInputBorder(),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _powerErgDurationHoursController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Duration Hours',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _powerErgDurationMinutesController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Duration Minutes',
-                        border: OutlineInputBorder(),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _powerErgDurationMinutesController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Duration Minutes',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Protocol: 10 min ramp from 50% to 100%, then duration at 100%, 5 min at 60%. If HR rises above Max Heart Rate, power decreases by 5 W/min until HR settles back under the cap.',
-              ),
-            ] else ...[
-              TextField(
-                controller: _assessmentPowerController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Assessment Power',
-                  border: OutlineInputBorder(),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Fixed protocol: 10 min ramp from 50% to 100%, 75 min at 100%, 5 min at 60%.',
-              ),
-            ],
+                const SizedBox(height: 8),
+                const Text(
+                  'Protocol: 10 min ramp from 50% to 100%, then duration at 100%, 5 min at 60%. If HR rises above Max Heart Rate, power decreases by 5 W/min until HR settles back under the cap.',
+                ),
+              ] else ...[
+                TextField(
+                  controller: _assessmentPowerController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Assessment Power',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Fixed protocol: 10 min ramp from 50% to 100%, 75 min at 100%, 5 min at 60%.',
+                ),
+              ],
             ],
             if (sessionState.error != null) ...[
               const SizedBox(height: 12),
@@ -521,7 +601,9 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: FilledButton(
-                  onPressed: canStart ? () => _startWorkout(selectedType) : null,
+                  onPressed: canStart
+                      ? () => _startWorkout(selectedType)
+                      : null,
                   child: const Text('Start'),
                 ),
               ),
@@ -566,25 +648,30 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                   ? '--'
                   : '${sessionState.currentHr} bpm',
             ),
-            _MetricRow(
-              label: 'Power',
-              value: sessionState.currentPower == null
-                  ? '--'
-                  : '${sessionState.currentPower} W',
-            ),
-            if (sessionState.selectedWorkoutType == WorkoutType.powerErg &&
-                sessionState.activeConfig is PowerErgConfig)
-              _MetricRow(
-                label: 'Target Power',
-                value:
-                    '${(sessionState.activeConfig as PowerErgConfig).targetPower} W',
-              ),
             if (sessionState.targetHr != null)
               _MetricRow(
                 label: sessionState.selectedWorkoutType == WorkoutType.powerErg
                     ? 'Max HR'
                     : 'Target HR',
                 value: '${sessionState.targetHr} bpm',
+              ),
+            _MetricRow(
+              label: 'Power (10s avg)',
+              value: sessionState.displayPower == null
+                  ? '--'
+                  : '${sessionState.displayPower} W',
+            ),
+            if (sessionState.currentCadence != null)
+              _MetricRow(
+                label: 'Cadence',
+                value: '${sessionState.currentCadence} rpm',
+              ),
+            if (sessionState.selectedWorkoutType == WorkoutType.powerErg &&
+                sessionState.activeConfig is PowerErgConfig)
+              _MetricRow(
+                label: 'Target Power',
+                value:
+                    '${(sessionState.activeConfig as PowerErgConfig).targetPower} W',
               ),
             if (sessionState.provisionalSummary != null) ...[
               const SizedBox(height: 12),
@@ -614,21 +701,22 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                     onPressed: sessionState.targetHr == null
                         ? null
                         : () => sessionController.updateHrErgTargetHr(
-                              sessionState.targetHr! - 5,
-                            ),
+                            sessionState.targetHr! - 5,
+                          ),
                     child: const Text('Target -5'),
                   ),
                   OutlinedButton(
                     onPressed: sessionState.targetHr == null
                         ? null
                         : () => sessionController.updateHrErgTargetHr(
-                              sessionState.targetHr! + 5,
-                            ),
+                            sessionState.targetHr! + 5,
+                          ),
                     child: const Text('Target +5'),
                   ),
                 ],
               ),
-            ] else if (sessionState.selectedWorkoutType == WorkoutType.powerErg &&
+            ] else if (sessionState.selectedWorkoutType ==
+                    WorkoutType.powerErg &&
                 sessionState.isRunning) ...[
               const SizedBox(height: 8),
               Wrap(
@@ -638,20 +726,20 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                     onPressed: sessionState.activeConfig is! PowerErgConfig
                         ? null
                         : () => sessionController.updatePowerErgTargetPower(
-                              (sessionState.activeConfig as PowerErgConfig)
-                                      .targetPower -
-                                  5,
-                            ),
+                            (sessionState.activeConfig as PowerErgConfig)
+                                    .targetPower -
+                                5,
+                          ),
                     child: const Text('Power -5'),
                   ),
                   OutlinedButton(
                     onPressed: sessionState.activeConfig is! PowerErgConfig
                         ? null
                         : () => sessionController.updatePowerErgTargetPower(
-                              (sessionState.activeConfig as PowerErgConfig)
-                                      .targetPower +
-                                  5,
-                            ),
+                            (sessionState.activeConfig as PowerErgConfig)
+                                    .targetPower +
+                                5,
+                          ),
                     child: const Text('Power +5'),
                   ),
                 ],
@@ -727,6 +815,14 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
                   onPressed: mockController.reconnectTrainer,
                   child: const Text('Reconnect Trainer'),
                 ),
+                OutlinedButton(
+                  onPressed: mockController.pauseTrainerTelemetry,
+                  child: const Text('Trainer Stall'),
+                ),
+                OutlinedButton(
+                  onPressed: mockController.resumeTrainerTelemetry,
+                  child: const Text('Trainer Resume'),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -789,7 +885,9 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
   }
 
   Future<void> _startWorkout(WorkoutType selectedType) async {
-    final sessionController = ref.read(workoutSessionControllerProvider.notifier);
+    final sessionController = ref.read(
+      workoutSessionControllerProvider.notifier,
+    );
     if (selectedType == WorkoutType.hrErg) {
       final startingWatts = int.tryParse(_startingWattsController.text.trim());
       final targetHr = int.tryParse(_targetHrController.text.trim());
@@ -864,7 +962,9 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       return;
     }
 
-    final assessmentPower = int.tryParse(_assessmentPowerController.text.trim());
+    final assessmentPower = int.tryParse(
+      _assessmentPowerController.text.trim(),
+    );
     if (assessmentPower == null || assessmentPower <= 0) {
       _showInvalidInput();
       return;
@@ -1096,6 +1196,7 @@ class _DeviceSection extends StatelessWidget {
     required this.title,
     required this.status,
     required this.selectedDeviceId,
+    required this.selectedDeviceName,
     required this.devices,
     required this.isScanning,
     required this.error,
@@ -1103,6 +1204,7 @@ class _DeviceSection extends StatelessWidget {
     required this.onToggleExpanded,
     required this.onScan,
     required this.onReconnectSaved,
+    required this.onDisconnect,
     required this.onConnect,
     this.compact = false,
   });
@@ -1110,6 +1212,7 @@ class _DeviceSection extends StatelessWidget {
   final String title;
   final ConnectionStatus status;
   final String? selectedDeviceId;
+  final String? selectedDeviceName;
   final List<BleDeviceInfo> devices;
   final bool isScanning;
   final String? error;
@@ -1117,21 +1220,25 @@ class _DeviceSection extends StatelessWidget {
   final VoidCallback onToggleExpanded;
   final Future<void> Function() onScan;
   final Future<void> Function() onReconnectSaved;
+  final Future<void> Function() onDisconnect;
   final Future<void> Function(String deviceId) onConnect;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final isConnected = status == ConnectionStatus.connected;
+    final canDisconnect =
+        selectedDeviceId != null &&
+        status != ConnectionStatus.disconnected &&
+        !isScanning;
     final showDetails = !isConnected || isExpanded;
     final compactChipLabel = title == 'HR Monitor'
         ? 'HR-Connected'
         : 'TR-Connected';
     final statusLabel = compact && isConnected
         ? compactChipLabel
-        : isConnected
-        ? 'Connected'
-        : 'Disconnected';
+        : _statusLabel(title, status);
+    final statusColor = _statusColor(status);
     return Card(
       child: Padding(
         padding: EdgeInsets.all(compact ? 10 : 12),
@@ -1154,7 +1261,7 @@ class _DeviceSection extends StatelessWidget {
                       borderRadius: BorderRadius.circular(999),
                       child: _CompactStatusPill(
                         label: statusLabel,
-                        isConnected: isConnected,
+                        backgroundColor: statusColor,
                       ),
                     ),
                   )
@@ -1164,9 +1271,7 @@ class _DeviceSection extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                     child: Chip(
                       label: Text(statusLabel),
-                      backgroundColor: isConnected
-                          ? Colors.green.shade100
-                          : Colors.red.shade100,
+                      backgroundColor: statusColor,
                     ),
                   ),
               ],
@@ -1174,11 +1279,12 @@ class _DeviceSection extends StatelessWidget {
             if (showDetails) ...[
               const SizedBox(height: 8),
               if (selectedDeviceId != null) ...[
-                Text('Saved device: $selectedDeviceId'),
+                Text('Saved device: ${_savedDeviceLabel()}'),
                 const SizedBox(height: 8),
               ],
               Wrap(
                 spacing: 8,
+                runSpacing: 8,
                 children: [
                   OutlinedButton(
                     onPressed: isScanning ? null : () => onScan(),
@@ -1189,6 +1295,10 @@ class _DeviceSection extends StatelessWidget {
                         ? null
                         : () => onReconnectSaved(),
                     child: const Text('Reconnect saved'),
+                  ),
+                  OutlinedButton(
+                    onPressed: canDisconnect ? () => onDisconnect() : null,
+                    child: const Text('Disconnect'),
                   ),
                 ],
               ),
@@ -1223,16 +1333,59 @@ class _DeviceSection extends StatelessWidget {
       ),
     );
   }
+
+  String _statusLabel(String title, ConnectionStatus status) {
+    switch (status) {
+      case ConnectionStatus.disconnected:
+        return 'Disconnected';
+      case ConnectionStatus.scanning:
+        return 'Scanning';
+      case ConnectionStatus.connecting:
+        return 'Connecting';
+      case ConnectionStatus.connectedNoData:
+        return title == 'HR Monitor'
+            ? 'Connected (no HR data)'
+            : 'Connected (no response)';
+      case ConnectionStatus.connected:
+        return 'Connected';
+      case ConnectionStatus.reconnecting:
+        return 'Reconnecting';
+    }
+  }
+
+  Color _statusColor(ConnectionStatus status) {
+    switch (status) {
+      case ConnectionStatus.connected:
+        return Colors.green.shade100;
+      case ConnectionStatus.connectedNoData:
+        return Colors.amber.shade100;
+      case ConnectionStatus.scanning:
+        return Colors.blue.shade100;
+      case ConnectionStatus.connecting:
+      case ConnectionStatus.reconnecting:
+        return Colors.orange.shade100;
+      case ConnectionStatus.disconnected:
+        return Colors.red.shade100;
+    }
+  }
+
+  String _savedDeviceLabel() {
+    final friendlyName = selectedDeviceName?.trim();
+    if (friendlyName != null && friendlyName.isNotEmpty) {
+      return friendlyName;
+    }
+    return selectedDeviceId ?? '';
+  }
 }
 
 class _CompactStatusPill extends StatelessWidget {
   const _CompactStatusPill({
     required this.label,
-    required this.isConnected,
+    required this.backgroundColor,
   });
 
   final String label;
-  final bool isConnected;
+  final Color backgroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1241,7 +1394,7 @@ class _CompactStatusPill extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: 32),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: isConnected ? Colors.green.shade100 : Colors.red.shade100,
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Center(
@@ -1251,9 +1404,9 @@ class _CompactStatusPill extends StatelessWidget {
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
         ),
       ),
@@ -1262,11 +1415,7 @@ class _CompactStatusPill extends StatelessWidget {
 }
 
 class _MetricRow extends StatelessWidget {
-  const _MetricRow({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
+  const _MetricRow({required this.label, required this.value, this.valueColor});
 
   final String label;
   final String value;
@@ -1281,10 +1430,7 @@ class _MetricRow extends StatelessWidget {
           Expanded(child: Text(label)),
           Text(
             value,
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: valueColor,
-            ),
+            style: TextStyle(fontWeight: FontWeight.w600, color: valueColor),
           ),
         ],
       ),

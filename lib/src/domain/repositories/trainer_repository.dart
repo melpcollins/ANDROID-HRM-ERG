@@ -1,10 +1,11 @@
 import '../models/ble_device_info.dart';
 import '../models/connection_status.dart';
+import '../models/trainer_telemetry.dart';
 
 abstract class TrainerRepository {
   Stream<ConnectionStatus> get connectionStatus;
 
-  Stream<int> get currentPower;
+  Stream<TrainerTelemetry> get telemetry;
 
   Future<List<BleDeviceInfo>> scanForDevices({
     Duration timeout = const Duration(seconds: 10),

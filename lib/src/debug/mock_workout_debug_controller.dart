@@ -64,6 +64,16 @@ class MockWorkoutDebugController extends StateNotifier<MockWorkoutDebugState> {
     state = state.copyWith(statusMessage: 'Mock trainer reconnected');
   }
 
+  void pauseTrainerTelemetry() {
+    _harness.stopTrainerTelemetry();
+    state = state.copyWith(statusMessage: 'Mock trainer telemetry stalled');
+  }
+
+  void resumeTrainerTelemetry() {
+    _harness.resumeTrainerTelemetry();
+    state = state.copyWith(statusMessage: 'Mock trainer telemetry resumed');
+  }
+
   void setSteadyHr(int bpm) {
     state = state.copyWith(steadyHr: bpm, statusMessage: 'Steady HR set to $bpm bpm');
   }
