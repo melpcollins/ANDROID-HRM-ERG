@@ -18,6 +18,37 @@ void main() {
     );
   }
 
+  Future<Map<String, Object>> currentPrefsMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    return Map<String, Object>.from(
+      prefs.getKeys().fold<Map<String, Object>>(<String, Object>{}, (
+        values,
+        key,
+      ) {
+        final value = prefs.get(key);
+        if (value != null) {
+          values[key] = value;
+        }
+        return values;
+      }),
+    );
+  }
+
+  Future<void> flushPrefsWrites(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump();
+  }
+
+  Future<void> pumpUi(
+    WidgetTester tester, {
+    int frames = 3,
+    Duration step = const Duration(milliseconds: 16),
+  }) async {
+    for (var i = 0; i < frames; i += 1) {
+      await tester.pump(step);
+    }
+  }
+
   Future<void> pumpApp(
     WidgetTester tester, {
     required FakeHrMonitorRepository hrRepo,
@@ -192,7 +223,7 @@ void main() {
     expect(find.text('124 bpm'), findsOneWidget);
 
     hrRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
 
     expect(find.text('124 bpm'), findsNothing);
     expect(find.text('--'), findsWidgets);
@@ -311,13 +342,17 @@ void main() {
       mockPrefs: const <String, Object>{
         'hr_erg_starting_watts': 88,
         'hr_erg_target_hr': 123,
+        'hr_erg_duration_hours': 2,
+        'hr_erg_duration_minutes': 15,
       },
     );
 
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
 
     expect(find.text('88'), findsWidgets);
     expect(find.text('123'), findsWidgets);
+    expect(find.text('2'), findsWidgets);
+    expect(find.text('15'), findsWidgets);
   });
 
   testWidgets('persists edited HR-ERG defaults across app restart', (
@@ -332,29 +367,21 @@ void main() {
     await tester.enterText(findTextFieldByLabel('Starting Watts'), '84');
     await tester.pump();
     await tester.enterText(findTextFieldByLabel('Target Heart Rate'), '118');
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.enterText(findTextFieldByLabel('Duration Hours'), '2');
+    await tester.pump();
+    await tester.enterText(findTextFieldByLabel('Duration Minutes'), '20');
+    await pumpUi(tester);
+    await flushPrefsWrites(tester);
 
     await pumpApp(
       tester,
       hrRepo: FakeHrMonitorRepository(),
       trainerRepo: FakeTrainerRepository(),
-      mockPrefs: await SharedPreferences.getInstance().then(
-        (prefs) => Map<String, Object>.from(
-          prefs.getKeys().fold<Map<String, Object>>(<String, Object>{}, (
-            values,
-            key,
-          ) {
-            final value = prefs.get(key);
-            if (value != null) {
-              values[key] = value;
-            }
-            return values;
-          }),
-        ),
-      ),
+      mockPrefs: await currentPrefsMap(),
     );
 
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
 
     final startingWattsField = tester.widget<TextField>(
       findTextFieldByLabel('Starting Watts'),
@@ -362,10 +389,129 @@ void main() {
     final targetHrField = tester.widget<TextField>(
       findTextFieldByLabel('Target Heart Rate'),
     );
+    final durationHoursField = tester.widget<TextField>(
+      findTextFieldByLabel('Duration Hours'),
+    );
+    final durationMinutesField = tester.widget<TextField>(
+      findTextFieldByLabel('Duration Minutes'),
+    );
 
     expect(startingWattsField.controller?.text, '84');
     expect(targetHrField.controller?.text, '118');
+    expect(durationHoursField.controller?.text, '2');
+    expect(durationMinutesField.controller?.text, '20');
   });
+
+  testWidgets('loads saved Power-ERG defaults and selected workout type', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+      mockPrefs: const <String, Object>{
+        'selected_workout_type': 'powerErg',
+        'power_erg_target_power': 165,
+        'power_erg_max_hr': 131,
+        'power_erg_duration_hours': 2,
+        'power_erg_duration_minutes': 10,
+      },
+    );
+
+    await pumpUi(tester);
+
+    expect(
+      find.byKey(const ValueKey('selected-workout-type-row')),
+      findsOneWidget,
+    );
+    expect(find.text('Power-ERG'), findsWidgets);
+    expect(find.text('Target Power'), findsOneWidget);
+    expect(find.text('Max Heart Rate'), findsOneWidget);
+    expect(find.text('165'), findsWidgets);
+    expect(find.text('131'), findsWidgets);
+    expect(find.text('2'), findsWidgets);
+    expect(find.text('10'), findsWidgets);
+  });
+
+  testWidgets(
+    'persists edited Power-ERG defaults and selected type to shared preferences',
+    (WidgetTester tester) async {
+      await pumpApp(
+        tester,
+        hrRepo: FakeHrMonitorRepository(),
+        trainerRepo: FakeTrainerRepository(),
+      );
+
+      await tester.tap(find.text('Power-ERG'));
+      await tester.pump();
+      await tester.enterText(findTextFieldByLabel('Target Power'), '172');
+      await tester.pump();
+      await tester.enterText(findTextFieldByLabel('Max Heart Rate'), '129');
+      await tester.pump();
+      await tester.enterText(findTextFieldByLabel('Duration Hours'), '3');
+      await tester.pump();
+      await tester.enterText(findTextFieldByLabel('Duration Minutes'), '5');
+      await pumpUi(tester);
+      await flushPrefsWrites(tester);
+      final savedPrefs = await currentPrefsMap();
+
+      expect(savedPrefs['selected_workout_type'], 'powerErg');
+      expect(savedPrefs['power_erg_target_power'], 172);
+      expect(savedPrefs['power_erg_max_hr'], 129);
+      expect(savedPrefs['power_erg_duration_hours'], 3);
+      expect(savedPrefs['power_erg_duration_minutes'], 5);
+    },
+  );
+
+  testWidgets(
+    'loads saved Zone 2 assessment defaults and selected workout type',
+    (WidgetTester tester) async {
+      await pumpApp(
+        tester,
+        hrRepo: FakeHrMonitorRepository(),
+        trainerRepo: FakeTrainerRepository(),
+        mockPrefs: const <String, Object>{
+          'selected_workout_type': 'zone2Assessment',
+          'assessment_power': 205,
+        },
+      );
+
+      await pumpUi(tester);
+
+      expect(
+        find.byKey(const ValueKey('selected-workout-type-row')),
+        findsOneWidget,
+      );
+      expect(find.text('Zone 2 Assessment'), findsWidgets);
+      expect(find.text('Assessment Power'), findsOneWidget);
+
+      final assessmentPowerField = tester.widget<TextField>(
+        findTextFieldByLabel('Assessment Power'),
+      );
+      expect(assessmentPowerField.controller?.text, '205');
+    },
+  );
+
+  testWidgets(
+    'persists edited Zone 2 assessment defaults and selected type to shared preferences',
+    (WidgetTester tester) async {
+      await pumpApp(
+        tester,
+        hrRepo: FakeHrMonitorRepository(),
+        trainerRepo: FakeTrainerRepository(),
+      );
+
+      await tester.tap(find.text('Zone 2 Assessment'));
+      await tester.pump();
+      await tester.enterText(findTextFieldByLabel('Assessment Power'), '215');
+      await pumpUi(tester);
+      await flushPrefsWrites(tester);
+      final savedPrefs = await currentPrefsMap();
+
+      expect(savedPrefs['selected_workout_type'], 'zone2Assessment');
+      expect(savedPrefs['assessment_power'], 215);
+    },
+  );
 
   testWidgets('shows permission guidance when Bluetooth access is denied', (
     WidgetTester tester,
@@ -421,7 +567,7 @@ void main() {
 
     hrRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
     trainerRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
 
     expect(find.text('Connected (no HR data)'), findsOneWidget);
     expect(find.text('Connected (no response)'), findsOneWidget);
@@ -441,7 +587,7 @@ void main() {
 
       hrRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
       trainerRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
-      await tester.pumpAndSettle();
+      await pumpUi(tester);
 
       expect(find.text('Connected (no HR data)'), findsOneWidget);
       expect(find.text('Connected (no response)'), findsOneWidget);

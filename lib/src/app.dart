@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -67,13 +69,35 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     _mockSteadyHrController = TextEditingController(text: '135');
     _startingWattsController.addListener(_handleStartingWattsChanged);
     _targetHrController.addListener(_handleTargetHrChanged);
-    _loadSavedHrErgDefaults();
+    _durationHoursController.addListener(_handleHrErgDurationChanged);
+    _durationMinutesController.addListener(_handleHrErgDurationChanged);
+    _powerErgPowerController.addListener(_handlePowerErgTargetPowerChanged);
+    _powerErgMaxHrController.addListener(_handlePowerErgMaxHrChanged);
+    _powerErgDurationHoursController.addListener(
+      _handlePowerErgDurationChanged,
+    );
+    _powerErgDurationMinutesController.addListener(
+      _handlePowerErgDurationChanged,
+    );
+    _assessmentPowerController.addListener(_handleAssessmentPowerChanged);
+    _loadSavedWorkoutDefaults();
   }
 
   @override
   void dispose() {
     _startingWattsController.removeListener(_handleStartingWattsChanged);
     _targetHrController.removeListener(_handleTargetHrChanged);
+    _durationHoursController.removeListener(_handleHrErgDurationChanged);
+    _durationMinutesController.removeListener(_handleHrErgDurationChanged);
+    _powerErgPowerController.removeListener(_handlePowerErgTargetPowerChanged);
+    _powerErgMaxHrController.removeListener(_handlePowerErgMaxHrChanged);
+    _powerErgDurationHoursController.removeListener(
+      _handlePowerErgDurationChanged,
+    );
+    _powerErgDurationMinutesController.removeListener(
+      _handlePowerErgDurationChanged,
+    );
+    _assessmentPowerController.removeListener(_handleAssessmentPowerChanged);
     _startingWattsController.dispose();
     _targetHrController.dispose();
     _durationHoursController.dispose();
@@ -341,11 +365,12 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     );
   }
 
-  void _selectWorkoutType(
+  Future<void> _selectWorkoutType(
     WorkoutSessionController sessionController,
     WorkoutType type,
-  ) {
+  ) async {
     sessionController.selectWorkoutType(type);
+    await _saveSelectedWorkoutType(type);
     setState(() {
       _showWorkoutTypeOptions = false;
     });
@@ -888,6 +913,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     final sessionController = ref.read(
       workoutSessionControllerProvider.notifier,
     );
+    await _saveSelectedWorkoutType(selectedType);
     if (selectedType == WorkoutType.hrErg) {
       final startingWatts = int.tryParse(_startingWattsController.text.trim());
       final targetHr = int.tryParse(_targetHrController.text.trim());
@@ -984,10 +1010,19 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     );
   }
 
-  Future<void> _loadSavedHrErgDefaults() async {
+  Future<void> _loadSavedWorkoutDefaults() async {
     final store = ref.read(deviceSelectionStoreProvider);
     final savedStartingWatts = await store.getHrErgStartingWatts();
     final savedTargetHr = await store.getHrErgTargetHr();
+    final savedHrErgDurationHours = await store.getHrErgDurationHours();
+    final savedHrErgDurationMinutes = await store.getHrErgDurationMinutes();
+    final savedPowerErgTargetPower = await store.getPowerErgTargetPower();
+    final savedPowerErgMaxHr = await store.getPowerErgMaxHr();
+    final savedPowerErgDurationHours = await store.getPowerErgDurationHours();
+    final savedPowerErgDurationMinutes = await store
+        .getPowerErgDurationMinutes();
+    final savedAssessmentPower = await store.getAssessmentPower();
+    final savedWorkoutTypeName = await store.getSelectedWorkoutType();
     if (!mounted) {
       return;
     }
@@ -998,6 +1033,41 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     if (savedTargetHr != null && savedTargetHr > 0) {
       _targetHrController.text = '$savedTargetHr';
     }
+    if (savedHrErgDurationHours != null && savedHrErgDurationHours >= 0) {
+      _durationHoursController.text = '$savedHrErgDurationHours';
+    }
+    if (savedHrErgDurationMinutes != null &&
+        savedHrErgDurationMinutes >= 0 &&
+        savedHrErgDurationMinutes <= 59) {
+      _durationMinutesController.text = '$savedHrErgDurationMinutes';
+    }
+    if (savedPowerErgTargetPower != null && savedPowerErgTargetPower > 0) {
+      _powerErgPowerController.text = '$savedPowerErgTargetPower';
+    }
+    if (savedPowerErgMaxHr != null && savedPowerErgMaxHr > 0) {
+      _powerErgMaxHrController.text = '$savedPowerErgMaxHr';
+    }
+    if (savedPowerErgDurationHours != null && savedPowerErgDurationHours >= 0) {
+      _powerErgDurationHoursController.text = '$savedPowerErgDurationHours';
+    }
+    if (savedPowerErgDurationMinutes != null &&
+        savedPowerErgDurationMinutes >= 0 &&
+        savedPowerErgDurationMinutes <= 59) {
+      _powerErgDurationMinutesController.text = '$savedPowerErgDurationMinutes';
+    }
+    if (savedAssessmentPower != null && savedAssessmentPower > 0) {
+      _assessmentPowerController.text = '$savedAssessmentPower';
+    }
+
+    final savedWorkoutType = _parseWorkoutType(savedWorkoutTypeName);
+    if (savedWorkoutType != null) {
+      ref
+          .read(workoutSessionControllerProvider.notifier)
+          .selectWorkoutType(savedWorkoutType);
+      setState(() {
+        _showWorkoutTypeOptions = false;
+      });
+    }
   }
 
   void _handleStartingWattsChanged() {
@@ -1005,6 +1075,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     if (watts == null || watts <= 0) {
       return;
     }
+    _saveSelectedWorkoutType(WorkoutType.hrErg);
     _saveStartingWatts(watts);
   }
 
@@ -1013,7 +1084,61 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     if (bpm == null || bpm <= 0) {
       return;
     }
+    _saveSelectedWorkoutType(WorkoutType.hrErg);
     _saveTargetHr(bpm);
+  }
+
+  void _handleHrErgDurationChanged() {
+    final hours = int.tryParse(_durationHoursController.text.trim());
+    final minutes = int.tryParse(_durationMinutesController.text.trim());
+    _saveSelectedWorkoutType(WorkoutType.hrErg);
+    if (hours != null && hours >= 0) {
+      _saveHrErgDurationHours(hours);
+    }
+    if (minutes != null && minutes >= 0 && minutes <= 59) {
+      _saveHrErgDurationMinutes(minutes);
+    }
+  }
+
+  void _handlePowerErgTargetPowerChanged() {
+    final watts = int.tryParse(_powerErgPowerController.text.trim());
+    if (watts == null || watts <= 0) {
+      return;
+    }
+    _saveSelectedWorkoutType(WorkoutType.powerErg);
+    _savePowerErgTargetPower(watts);
+  }
+
+  void _handlePowerErgMaxHrChanged() {
+    final bpm = int.tryParse(_powerErgMaxHrController.text.trim());
+    if (bpm == null || bpm <= 0) {
+      return;
+    }
+    _saveSelectedWorkoutType(WorkoutType.powerErg);
+    _savePowerErgMaxHr(bpm);
+  }
+
+  void _handlePowerErgDurationChanged() {
+    final hours = int.tryParse(_powerErgDurationHoursController.text.trim());
+    final minutes = int.tryParse(
+      _powerErgDurationMinutesController.text.trim(),
+    );
+    _saveSelectedWorkoutType(WorkoutType.powerErg);
+    if (hours != null && hours >= 0) {
+      _savePowerErgDurationHours(hours);
+    }
+    if (minutes != null && minutes >= 0 && minutes <= 59) {
+      _savePowerErgDurationMinutes(minutes);
+    }
+  }
+
+  void _handleAssessmentPowerChanged() {
+    final watts = int.tryParse(_assessmentPowerController.text.trim());
+    if (watts == null || watts <= 0) {
+      return;
+    }
+    _saveSelectedWorkoutType(WorkoutType.zone2Assessment);
+    _saveAssessmentPower(watts);
   }
 
   Future<void> _saveStartingWatts(int watts) async {
@@ -1024,6 +1149,46 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
   Future<void> _saveTargetHr(int bpm) async {
     final store = ref.read(deviceSelectionStoreProvider);
     await store.saveHrErgTargetHr(bpm);
+  }
+
+  Future<void> _saveHrErgDurationHours(int hours) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.saveHrErgDurationHours(hours);
+  }
+
+  Future<void> _saveHrErgDurationMinutes(int minutes) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.saveHrErgDurationMinutes(minutes);
+  }
+
+  Future<void> _savePowerErgTargetPower(int watts) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.savePowerErgTargetPower(watts);
+  }
+
+  Future<void> _savePowerErgMaxHr(int bpm) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.savePowerErgMaxHr(bpm);
+  }
+
+  Future<void> _savePowerErgDurationHours(int hours) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.savePowerErgDurationHours(hours);
+  }
+
+  Future<void> _savePowerErgDurationMinutes(int minutes) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.savePowerErgDurationMinutes(minutes);
+  }
+
+  Future<void> _saveAssessmentPower(int watts) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.saveAssessmentPower(watts);
+  }
+
+  Future<void> _saveSelectedWorkoutType(WorkoutType type) async {
+    final store = ref.read(deviceSelectionStoreProvider);
+    await store.saveSelectedWorkoutType(type.name);
   }
 
   void _applyMockSteadyHr(MockWorkoutDebugController mockController) {
@@ -1048,6 +1213,19 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     }
   }
 
+  WorkoutType? _parseWorkoutType(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return null;
+    }
+
+    for (final type in WorkoutType.values) {
+      if (type.name == value) {
+        return type;
+      }
+    }
+    return null;
+  }
+
   String _formatDuration(Duration? duration) {
     if (duration == null) {
       return '--';
@@ -1070,7 +1248,7 @@ class _WorkoutTypeOption extends StatelessWidget {
 
   final String label;
   final bool selected;
-  final VoidCallback onTap;
+  final Future<void> Function() onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1078,7 +1256,9 @@ class _WorkoutTypeOption extends StatelessWidget {
       color: selected ? Colors.teal.shade50 : Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        onTap: onTap,
+        onTap: () {
+          unawaited(onTap());
+        },
         borderRadius: BorderRadius.circular(12),
         child: Container(
           width: double.infinity,
