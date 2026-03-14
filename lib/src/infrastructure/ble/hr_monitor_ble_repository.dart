@@ -20,6 +20,7 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
   final StreamController<HrSample> _hrController;
   StreamSubscription<List<int>>? _hrNotificationSubscription;
   Timer? _staleTimer;
+  bool? _lastContactDetected;
 
   @override
   Stream<HrSample> get hrSamples => _hrController.stream;
@@ -47,6 +48,7 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
     _hrNotificationSubscription = null;
     _staleTimer?.cancel();
     _staleTimer = null;
+    _lastContactDetected = null;
     await super.disconnect();
   }
 
@@ -105,12 +107,34 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
     _hrNotificationSubscription = hrCharacteristic.onValueReceived.listen((
       data,
     ) {
-      final bpm = parseHeartRateMeasurement(data);
-      if (bpm <= 0) {
+      final measurement = parseHeartRateMeasurementPacket(data);
+      if (measurement.contactSupported &&
+          measurement.contactDetected != _lastContactDetected) {
+        logBleEvent(
+          measurement.contactDetected == true
+              ? 'hr_contact_detected'
+              : 'hr_contact_lost',
+          details: <String, Object?>{
+            'bpm': measurement.bpm,
+            'contactSupported': measurement.contactSupported,
+          },
+        );
+        _lastContactDetected = measurement.contactDetected;
+      }
+
+      if (measurement.contactSupported &&
+          measurement.contactDetected == false) {
+        _staleTimer?.cancel();
+        _staleTimer = null;
+        emitStatus(ConnectionStatus.disconnected);
         return;
       }
 
-      final sample = HrSample(bpm: bpm, timestamp: DateTime.now());
+      if (measurement.bpm <= 0) {
+        return;
+      }
+
+      final sample = HrSample(bpm: measurement.bpm, timestamp: DateTime.now());
       _scheduleStaleTimer();
       emitStatus(ConnectionStatus.connected);
       _hrController.add(sample);
@@ -130,6 +154,7 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
     if (status == ConnectionStatus.disconnected) {
       _staleTimer?.cancel();
       _staleTimer = null;
+      _lastContactDetected = null;
     }
   }
 
@@ -142,9 +167,10 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
     _staleTimer = Timer(_staleThreshold, () {
       if (currentStatus == ConnectionStatus.connected ||
           currentStatus == ConnectionStatus.connectedNoData) {
-        logBleEvent('stale_detected', details: const <String, Object?>{
-          'device': 'hrm',
-        });
+        logBleEvent(
+          'stale_detected',
+          details: const <String, Object?>{'device': 'hrm'},
+        );
         emitStatus(ConnectionStatus.connectedNoData);
       }
     });

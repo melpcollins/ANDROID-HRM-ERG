@@ -52,6 +52,8 @@ void main() {
     if (autoConnectDevices) {
       await hrRepo.reconnect();
       await trainerRepo.reconnect();
+      hrRepo.emitHr(124);
+      trainerRepo.emitTelemetry(180, cadence: trainerRepo.currentCadence ?? 88);
       await tester.pump();
     }
   }
@@ -144,6 +146,20 @@ void main() {
     expect(find.text('01:00:00'), findsOneWidget);
   });
 
+  testWidgets('stale HR shows disconnected in setup after fresh data stops', (
+    WidgetTester tester,
+  ) async {
+    final hrRepo = FakeHrMonitorRepository();
+    final trainerRepo = FakeTrainerRepository();
+    await pumpApp(tester, hrRepo: hrRepo, trainerRepo: trainerRepo);
+
+    await tester.pump(const Duration(seconds: 6));
+
+    expect(find.text('Disconnected'), findsOneWidget);
+    expect(find.text('Trainer'), findsOneWidget);
+    expect(find.text('Reconnect saved'), findsOneWidget);
+  });
+
   testWidgets('live HR-ERG metrics show target HR above power and cadence', (
     WidgetTester tester,
   ) async {
@@ -162,6 +178,24 @@ void main() {
     expect(targetHrTop, greaterThan(hrTop));
     expect(powerTop, greaterThan(targetHrTop));
     expect(cadenceTop, greaterThan(powerTop));
+  });
+
+  testWidgets('live session blanks stale HR instead of holding last bpm', (
+    WidgetTester tester,
+  ) async {
+    final hrRepo = FakeHrMonitorRepository();
+    final trainerRepo = FakeTrainerRepository();
+    await pumpApp(tester, hrRepo: hrRepo, trainerRepo: trainerRepo);
+
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    expect(find.text('124 bpm'), findsOneWidget);
+
+    hrRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
+    await tester.pumpAndSettle();
+
+    expect(find.text('124 bpm'), findsNothing);
+    expect(find.text('--'), findsWidgets);
   });
 
   testWidgets('workout setup collapses on start and reopens on stop', (
@@ -398,7 +432,12 @@ void main() {
     (WidgetTester tester) async {
       final hrRepo = FakeHrMonitorRepository()..savedDeviceId = 'hr-1';
       final trainerRepo = FakeTrainerRepository()..savedDeviceId = 'trainer-1';
-      await pumpApp(tester, hrRepo: hrRepo, trainerRepo: trainerRepo);
+      await pumpApp(
+        tester,
+        hrRepo: hrRepo,
+        trainerRepo: trainerRepo,
+        autoConnectDevices: false,
+      );
 
       hrRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
       trainerRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);

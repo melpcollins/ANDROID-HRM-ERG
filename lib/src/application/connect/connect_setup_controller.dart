@@ -17,20 +17,36 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     required TrainerRepository trainerRepository,
     required BlePermissionService blePermissionService,
     required DeviceSelectionStore deviceSelectionStore,
+    Duration hrStaleThreshold = const Duration(seconds: 5),
+    Duration trainerStaleThreshold = const Duration(seconds: 10),
   }) : _hrMonitorRepository = hrMonitorRepository,
        _trainerRepository = trainerRepository,
        _blePermissionService = blePermissionService,
        _deviceSelectionStore = deviceSelectionStore,
+       _hrStaleThreshold = hrStaleThreshold,
+       _trainerStaleThreshold = trainerStaleThreshold,
        super(const ConnectSetupState());
 
   final HrMonitorRepository _hrMonitorRepository;
   final TrainerRepository _trainerRepository;
   final BlePermissionService _blePermissionService;
   final DeviceSelectionStore _deviceSelectionStore;
+  final Duration _hrStaleThreshold;
+  final Duration _trainerStaleThreshold;
 
   StreamSubscription? _hrStatusSubscription;
   StreamSubscription? _trainerStatusSubscription;
+  StreamSubscription? _hrSampleSubscription;
+  StreamSubscription? _trainerTelemetrySubscription;
   StreamSubscription<bool>? _bluetoothEnabledSubscription;
+
+  Timer? _hrStaleTimer;
+  Timer? _trainerStaleTimer;
+  ConnectionStatus _rawHrStatus = ConnectionStatus.disconnected;
+  ConnectionStatus _rawTrainerStatus = ConnectionStatus.disconnected;
+  bool _hrHasFreshData = false;
+  bool _hrHasReceivedDataThisConnection = false;
+  bool _trainerHasFreshData = false;
 
   bool _autoReconnectInProgress = false;
 
@@ -38,13 +54,26 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     _hrStatusSubscription ??= _hrMonitorRepository.connectionStatus.listen((
       status,
     ) {
-      state = state.copyWith(hrStatus: status);
+      _rawHrStatus = status;
+      _applyHrStatus();
     });
 
     _trainerStatusSubscription ??= _trainerRepository.connectionStatus.listen((
       status,
     ) {
-      state = state.copyWith(trainerStatus: status);
+      _rawTrainerStatus = status;
+      _applyTrainerStatus();
+    });
+    _hrSampleSubscription ??= _hrMonitorRepository.hrSamples.listen((_) {
+      _hrHasFreshData = true;
+      _hrHasReceivedDataThisConnection = true;
+      _scheduleHrStaleTimer();
+      _applyHrStatus();
+    });
+    _trainerTelemetrySubscription ??= _trainerRepository.telemetry.listen((_) {
+      _trainerHasFreshData = true;
+      _scheduleTrainerStaleTimer();
+      _applyTrainerStatus();
     });
     _bluetoothEnabledSubscription ??= _blePermissionService
         .bluetoothEnabledStream
@@ -348,11 +377,78 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     return name.trim().isNotEmpty;
   }
 
+  void _applyHrStatus() {
+    switch (_rawHrStatus) {
+      case ConnectionStatus.connected:
+      case ConnectionStatus.connectedNoData:
+        state = state.copyWith(
+          hrStatus: _hrHasFreshData
+              ? ConnectionStatus.connected
+              : (_hrHasReceivedDataThisConnection
+                    ? ConnectionStatus.disconnected
+                    : ConnectionStatus.connectedNoData),
+        );
+        return;
+      case ConnectionStatus.disconnected:
+      case ConnectionStatus.scanning:
+      case ConnectionStatus.connecting:
+      case ConnectionStatus.reconnecting:
+        _hrHasFreshData = false;
+        _hrHasReceivedDataThisConnection = false;
+        _hrStaleTimer?.cancel();
+        _hrStaleTimer = null;
+        state = state.copyWith(hrStatus: _rawHrStatus);
+        return;
+    }
+  }
+
+  void _applyTrainerStatus() {
+    switch (_rawTrainerStatus) {
+      case ConnectionStatus.connected:
+      case ConnectionStatus.connectedNoData:
+        state = state.copyWith(
+          trainerStatus: _trainerHasFreshData
+              ? ConnectionStatus.connected
+              : ConnectionStatus.connectedNoData,
+        );
+        return;
+      case ConnectionStatus.disconnected:
+      case ConnectionStatus.scanning:
+      case ConnectionStatus.connecting:
+      case ConnectionStatus.reconnecting:
+        _trainerHasFreshData = false;
+        _trainerStaleTimer?.cancel();
+        _trainerStaleTimer = null;
+        state = state.copyWith(trainerStatus: _rawTrainerStatus);
+        return;
+    }
+  }
+
+  void _scheduleHrStaleTimer() {
+    _hrStaleTimer?.cancel();
+    _hrStaleTimer = Timer(_hrStaleThreshold, () {
+      _hrHasFreshData = false;
+      _applyHrStatus();
+    });
+  }
+
+  void _scheduleTrainerStaleTimer() {
+    _trainerStaleTimer?.cancel();
+    _trainerStaleTimer = Timer(_trainerStaleThreshold, () {
+      _trainerHasFreshData = false;
+      _applyTrainerStatus();
+    });
+  }
+
   @override
   void dispose() {
     _hrStatusSubscription?.cancel();
     _trainerStatusSubscription?.cancel();
+    _hrSampleSubscription?.cancel();
+    _trainerTelemetrySubscription?.cancel();
     _bluetoothEnabledSubscription?.cancel();
+    _hrStaleTimer?.cancel();
+    _trainerStaleTimer?.cancel();
     super.dispose();
   }
 }

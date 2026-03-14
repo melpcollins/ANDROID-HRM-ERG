@@ -644,7 +644,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
             ),
             _MetricRow(
               label: 'HR',
-              value: sessionState.currentHr == null
+              value: sessionState.currentHr == null || !sessionState.hrFresh
                   ? '--'
                   : '${sessionState.currentHr} bpm',
             ),

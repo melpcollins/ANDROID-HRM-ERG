@@ -15,23 +15,36 @@ void main() {
     test('returns zero for truncated payloads', () {
       expect(parseHeartRateMeasurement(<int>[0x01, 0x2C]), 0);
     });
+
+    test('exposes sensor contact not detected when supported', () {
+      final measurement = parseHeartRateMeasurementPacket(<int>[0x04, 54]);
+
+      expect(measurement.bpm, 54);
+      expect(measurement.contactSupported, isTrue);
+      expect(measurement.contactDetected, isFalse);
+    });
+
+    test('exposes sensor contact detected when supported', () {
+      final measurement = parseHeartRateMeasurementPacket(<int>[0x06, 142]);
+
+      expect(measurement.bpm, 142);
+      expect(measurement.contactSupported, isTrue);
+      expect(measurement.contactDetected, isTrue);
+    });
   });
 
   group('parseIndoorBikeData', () {
     test('parses power and cadence when present', () {
-      final telemetry = parseIndoorBikeData(
-        <int>[
-          0x44,
-          0x00, // flags: cadence + instantaneous power, speed present
-          0x2C,
-          0x01, // speed
-          0xB4,
-          0x00, // cadence = 90 rpm (0.5 rpm units)
-          0xFA,
-          0x00, // power = 250 W
-        ],
-        timestamp: DateTime(2026, 1, 1, 9),
-      );
+      final telemetry = parseIndoorBikeData(<int>[
+        0x44,
+        0x00, // flags: cadence + instantaneous power, speed present
+        0x2C,
+        0x01, // speed
+        0xB4,
+        0x00, // cadence = 90 rpm (0.5 rpm units)
+        0xFA,
+        0x00, // power = 250 W
+      ], timestamp: DateTime(2026, 1, 1, 9));
 
       expect(telemetry, isNotNull);
       expect(telemetry!.powerWatts, 250);
@@ -39,15 +52,12 @@ void main() {
     });
 
     test('parses power when speed is omitted by the more-data flag', () {
-      final telemetry = parseIndoorBikeData(
-        <int>[
-          0x41,
-          0x00, // flags: more data + instantaneous power
-          0x64,
-          0x00, // power = 100 W
-        ],
-        timestamp: DateTime(2026, 1, 1, 9),
-      );
+      final telemetry = parseIndoorBikeData(<int>[
+        0x41,
+        0x00, // flags: more data + instantaneous power
+        0x64,
+        0x00, // power = 100 W
+      ], timestamp: DateTime(2026, 1, 1, 9));
 
       expect(telemetry, isNotNull);
       expect(telemetry!.powerWatts, 100);
@@ -55,10 +65,14 @@ void main() {
     });
 
     test('returns null when power is missing', () {
-      final telemetry = parseIndoorBikeData(
-        <int>[0x04, 0x00, 0x2C, 0x01, 0xB4, 0x00],
-        timestamp: DateTime(2026, 1, 1, 9),
-      );
+      final telemetry = parseIndoorBikeData(<int>[
+        0x04,
+        0x00,
+        0x2C,
+        0x01,
+        0xB4,
+        0x00,
+      ], timestamp: DateTime(2026, 1, 1, 9));
 
       expect(telemetry, isNull);
     });

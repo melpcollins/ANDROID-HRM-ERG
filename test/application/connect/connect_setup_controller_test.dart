@@ -15,12 +15,16 @@ void main() {
     required FakeTrainerRepository trainerRepo,
     required FakeBlePermissionService permissionService,
     DeviceSelectionStore? store,
+    Duration hrStaleThreshold = const Duration(seconds: 5),
+    Duration trainerStaleThreshold = const Duration(seconds: 10),
   }) {
     final controller = ConnectSetupController(
       hrMonitorRepository: hrRepo,
       trainerRepository: trainerRepo,
       blePermissionService: permissionService,
       deviceSelectionStore: store ?? DeviceSelectionStore(),
+      hrStaleThreshold: hrStaleThreshold,
+      trainerStaleThreshold: trainerStaleThreshold,
     );
     addTearDown(() {
       controller.dispose();
@@ -145,6 +149,43 @@ void main() {
     expect(controller.state.hrStatus, ConnectionStatus.connectedNoData);
     expect(controller.state.trainerStatus, ConnectionStatus.connectedNoData);
   });
+
+  test(
+    'fresh HR data promotes connected devices and stale timers mark HR disconnected',
+    () async {
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      final hrRepo = FakeHrMonitorRepository();
+      final trainerRepo = FakeTrainerRepository();
+      final permissionService = FakeBlePermissionService();
+      final controller = buildController(
+        hrRepo: hrRepo,
+        trainerRepo: trainerRepo,
+        permissionService: permissionService,
+        hrStaleThreshold: const Duration(milliseconds: 20),
+        trainerStaleThreshold: const Duration(milliseconds: 20),
+      );
+
+      await controller.initialize();
+      hrRepo.emitConnectionStatus(ConnectionStatus.connected);
+      trainerRepo.emitConnectionStatus(ConnectionStatus.connected);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state.hrStatus, ConnectionStatus.connectedNoData);
+      expect(controller.state.trainerStatus, ConnectionStatus.connectedNoData);
+
+      hrRepo.emitHr(124);
+      trainerRepo.emitTelemetry(180, cadence: 90);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state.hrStatus, ConnectionStatus.connected);
+      expect(controller.state.trainerStatus, ConnectionStatus.connected);
+
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(controller.state.hrStatus, ConnectionStatus.disconnected);
+      expect(controller.state.trainerStatus, ConnectionStatus.connectedNoData);
+    },
+  );
 
   test('scan upgrades saved devices from IDs to friendly names', () async {
     SharedPreferences.setMockInitialValues(const <String, Object>{});
