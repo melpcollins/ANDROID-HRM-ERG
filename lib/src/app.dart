@@ -16,8 +16,9 @@ import 'domain/models/workout_config.dart';
 import 'domain/models/workout_summary.dart';
 import 'domain/models/workout_type.dart';
 
-const String _placeholderSupportEmail = 'support@example.com';
-const String _placeholderPrivacyUrl = 'https://example.com/privacy-policy';
+const String _placeholderSupportEmail = 'melpcollins@gmail.com';
+const String _placeholderPrivacyUrl =
+    'https://melpcollins.github.io/ANDROID-HRM-ERG/privacy-policy.html';
 const String _appDisplayName = 'Zone 2 Cycling by Heart';
 
 enum _AppMenuAction {

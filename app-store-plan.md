@@ -15,7 +15,8 @@ It is split into two passes:
 ## Current Launch Blockers In This Repo
 
 - Firebase is optional in code, but there is no `google-services.json` or Android Firebase plugin wiring yet.
-- Support email and privacy policy values are placeholders in the UI.
+- Support email is now set in the UI.
+- Privacy policy URL is now live and can be used in the app and Play Console.
 - Google Play listing assets are only partially ready:
   - launcher icon exists
   - short description exists
@@ -142,8 +143,8 @@ It is split into two passes:
 
 ### Current placeholders to replace before production
 
-- Support email: `support@example.com`
-- Privacy policy URL: `https://example.com/privacy-policy`
+- Support email: `melpcollins@gmail.com`
+- Privacy policy URL: `https://melpcollins.github.io/ANDROID-HRM-ERG/privacy-policy.html`
 
 ## Data Safety / Privacy Mapping
 
@@ -177,6 +178,8 @@ It is split into two passes:
 - Health/Fitness positioning
 - No-ads declaration if still true at launch
 - Privacy policy link
+- Current privacy policy URL:
+  - `https://melpcollins.github.io/ANDROID-HRM-ERG/privacy-policy.html`
 
 ## Manual Google Play Internal-Test Checklist
 
@@ -209,6 +212,7 @@ It is split into two passes:
 - Current draft copy already exists in `Store-description.md`.
 - Add support email.
 - Publish privacy policy.
+- Current privacy policy page is live.
 - Prepare screenshots:
   - device setup
   - workout setup
@@ -255,7 +259,7 @@ Do not promote beyond internal testing until all of these are true:
 - Signed `.aab` builds successfully.
 - Firebase is wired and receiving events.
 - Privacy policy is live.
-- Placeholder support and privacy values are replaced.
+- Support email and privacy URL are replaced with live values.
 - Store listing reflects the final app name `Zone 2 Cycling by Heart`.
 - Bluetooth SQA manual checklist passes on physical devices.
 - At least one successful end-to-end ride is completed for:
