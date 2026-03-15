@@ -1,4 +1,4 @@
-package com.example.android_hrm_erg
+package com.melcollins.zone2cyclingbyheart
 
 import android.os.Bundle
 import android.view.WindowManager

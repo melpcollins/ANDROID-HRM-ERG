@@ -2,6 +2,11 @@
 
 This document is the store-readiness plan for `android-hrm-erg`.
 
+Current branding:
+
+- App name: `Zone 2 Cycling by Heart`
+- Short description: `Heart-rate guided Zone 2 ERG training for indoor cycling`
+
 It is split into two passes:
 
 1. Pass 1: repo work for telemetry, diagnostics, support UX, and release preparation.
@@ -9,12 +14,31 @@ It is split into two passes:
 
 ## Current Launch Blockers In This Repo
 
-- Android package name still uses the default placeholder: `com.example.android_hrm_erg`.
-- Release signing still uses the debug key in `android/app/build.gradle.kts`.
 - Firebase is optional in code, but there is no `google-services.json` or Android Firebase plugin wiring yet.
 - Support email and privacy policy values are placeholders in the UI.
-- Google Play listing assets do not exist yet beyond the launcher icon.
+- Google Play listing assets are only partially ready:
+  - launcher icon exists
+  - short description exists
+  - long description exists
+  - screenshots and feature graphic are still missing
 - No signed `.aab` has been built and tested on a clean release configuration.
+
+## What Is Already Implemented
+
+- Anonymous telemetry hooks for app lifecycle, BLE setup, connect/reconnect, workout usage, and diagnostics export.
+- Local diagnostics storage with runtime events, session files, export generation, retention pruning, and corruption hardening.
+- Support UI with `Support`, `Export diagnostics`, `App info`, and detailed workout information menu items.
+- On-device diagnostics export flow using the Android share sheet.
+- BLE reliability improvements:
+  - scan/connect overlap reduction
+  - trainer FTMS preparation retries
+  - HR strap scan retry and user guidance
+- Branding updates:
+  - app display name updated to `Zone 2 Cycling by Heart`
+  - simplified red `Z2` launcher icon
+  - store copy added to `Store-description.md`
+- Android application ID updated to `com.melcollins.zone2cyclingbyheart`
+- Release upload keystore created and wired through `android/key.properties`
 
 ## Anonymous Telemetry And Metrics Design
 
@@ -158,9 +182,9 @@ It is split into two passes:
 
 ### Identity and packaging
 
-- Choose the final Android package name.
-- Update the Android namespace and Kotlin package paths.
-- Confirm final app display name.
+- Final Android package name is `com.melcollins.zone2cyclingbyheart`.
+- Android namespace and Kotlin package paths are updated to match.
+- App display name is now set to `Zone 2 Cycling by Heart`.
 - Increment `version` / `versionCode` for release.
 
 ### Firebase and release wiring
@@ -173,15 +197,16 @@ It is split into two passes:
 
 ### Signing
 
-- Create an upload keystore.
+- Upload keystore has been created locally.
 - Store credentials securely outside source control.
-- Add release signing config.
+- Release signing config is wired through `android/key.properties`.
 - Enable Play App Signing in Play Console.
 
 ### Store listing
 
 - Create the Play Console app.
 - Add short description and full description.
+- Current draft copy already exists in `Store-description.md`.
 - Add support email.
 - Publish privacy policy.
 - Prepare screenshots:
@@ -231,6 +256,7 @@ Do not promote beyond internal testing until all of these are true:
 - Firebase is wired and receiving events.
 - Privacy policy is live.
 - Placeholder support and privacy values are replaced.
+- Store listing reflects the final app name `Zone 2 Cycling by Heart`.
 - Bluetooth SQA manual checklist passes on physical devices.
 - At least one successful end-to-end ride is completed for:
   - `HR-ERG`
