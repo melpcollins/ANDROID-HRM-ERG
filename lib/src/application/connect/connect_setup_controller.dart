@@ -15,6 +15,9 @@ import '../../infrastructure/storage/device_selection_store.dart';
 import 'connect_setup_state.dart';
 
 class ConnectSetupController extends StateNotifier<ConnectSetupState> {
+  static const int _hrScanAttempts = 2;
+  static const Duration _hrScanRetryDelay = Duration(seconds: 1);
+
   ConnectSetupController({
     required HrMonitorRepository hrMonitorRepository,
     required TrainerRepository trainerRepository,
@@ -133,7 +136,7 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     state = state.copyWith(scanningHr: true, clearHrError: true);
 
     try {
-      final devices = await _hrMonitorRepository.scanForDevices();
+      final devices = await _scanHrDevicesWithWakeRetry();
       state = state.copyWith(hrDevices: devices, scanningHr: false);
       await _refreshSavedNameFromDevices(
         selectedId: state.selectedHrId,
@@ -464,6 +467,33 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     } finally {
       _autoReconnectInProgress = false;
     }
+  }
+
+  Future<List<BleDeviceInfo>> _scanHrDevicesWithWakeRetry() async {
+    List<BleDeviceInfo> devices = const <BleDeviceInfo>[];
+
+    for (var attempt = 1; attempt <= _hrScanAttempts; attempt += 1) {
+      devices = await _hrMonitorRepository.scanForDevices();
+      if (devices.isNotEmpty || attempt == _hrScanAttempts) {
+        return devices;
+      }
+
+      _trackSetupEvent(
+        'ble_scan_retry',
+        telemetryProperties: const <String, Object?>{
+          'device_role': 'hr_monitor',
+          'trigger': 'empty_scan',
+        },
+        diagnosticsData: <String, Object?>{
+          'device_role': 'hr_monitor',
+          'trigger': 'empty_scan',
+          'attempt': attempt,
+        },
+      );
+      await Future<void>.delayed(_hrScanRetryDelay);
+    }
+
+    return devices;
   }
 
   Future<void> _attemptReconnect({

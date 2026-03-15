@@ -18,8 +18,16 @@ import 'domain/models/workout_type.dart';
 
 const String _placeholderSupportEmail = 'support@example.com';
 const String _placeholderPrivacyUrl = 'https://example.com/privacy-policy';
+const String _appDisplayName = 'Zone 2 Cycling by Heart';
 
-enum _AppMenuAction { support, exportDiagnostics, appInfo }
+enum _AppMenuAction {
+  support,
+  hrErgInfo,
+  powerErgInfo,
+  zone2AssessmentInfo,
+  exportDiagnostics,
+  appInfo,
+}
 
 class HrmErgApp extends StatelessWidget {
   const HrmErgApp({super.key});
@@ -27,7 +35,7 @@ class HrmErgApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Cycling HR ERG',
+      title: _appDisplayName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
@@ -175,7 +183,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Cycling HR ERG'),
+        title: const Text(_appDisplayName),
         actions: [
           PopupMenuButton<_AppMenuAction>(
             onSelected: (action) {
@@ -185,6 +193,18 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
               PopupMenuItem<_AppMenuAction>(
                 value: _AppMenuAction.support,
                 child: Text('Support'),
+              ),
+              PopupMenuItem<_AppMenuAction>(
+                value: _AppMenuAction.hrErgInfo,
+                child: Text('About HR-ERG'),
+              ),
+              PopupMenuItem<_AppMenuAction>(
+                value: _AppMenuAction.powerErgInfo,
+                child: Text('About Power-ERG'),
+              ),
+              PopupMenuItem<_AppMenuAction>(
+                value: _AppMenuAction.zone2AssessmentInfo,
+                child: Text('About Zone 2 Assessment'),
               ),
               PopupMenuItem<_AppMenuAction>(
                 value: _AppMenuAction.exportDiagnostics,
@@ -252,6 +272,12 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     switch (action) {
       case _AppMenuAction.support:
         return _showSupportSheet(connectState);
+      case _AppMenuAction.hrErgInfo:
+        return _showWorkoutInfoSheet(WorkoutType.hrErg);
+      case _AppMenuAction.powerErgInfo:
+        return _showWorkoutInfoSheet(WorkoutType.powerErg);
+      case _AppMenuAction.zone2AssessmentInfo:
+        return _showWorkoutInfoSheet(WorkoutType.zone2Assessment);
       case _AppMenuAction.exportDiagnostics:
         return _exportDiagnostics();
       case _AppMenuAction.appInfo:
@@ -350,6 +376,42 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     );
   }
 
+  Future<void> _showWorkoutInfoSheet(WorkoutType type) async {
+    final info = _workoutInfo(type);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    info.title,
+                    style: Theme.of(sheetContext).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    info.summary,
+                    style: Theme.of(sheetContext).textTheme.titleMedium,
+                  ),
+                  for (final paragraph in info.paragraphs) ...[
+                    const SizedBox(height: 12),
+                    Text(paragraph),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _exportDiagnostics() async {
     final exporter = ref.read(diagnosticsExporterProvider);
     final telemetry = ref.read(appTelemetryProvider);
@@ -373,9 +435,9 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       final result = await SharePlus.instance.share(
         ShareParams(
           files: <XFile>[XFile(exportFile.path)],
-          subject: 'Cycling HR ERG diagnostics export',
+          subject: '$_appDisplayName diagnostics export',
           text:
-              'Cycling HR ERG diagnostics export. This file is only created after explicit user action.',
+              '$_appDisplayName diagnostics export. This file is only created after explicit user action.',
         ),
       );
       unawaited(
@@ -447,6 +509,47 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       return id;
     }
     return 'Not selected';
+  }
+
+  _WorkoutInfoContent _workoutInfo(WorkoutType type) {
+    switch (type) {
+      case WorkoutType.hrErg:
+        return const _WorkoutInfoContent(
+          title: 'About HR-ERG',
+          summary:
+              'A heart-rate driven endurance ride that adjusts trainer power to keep you near your target HR.',
+          paragraphs: <String>[
+            'HR-ERG is the most heart-rate-driven workout in the app. You choose a starting wattage, a target heart rate, and a ride duration. The ride begins at your chosen starting power and then the trainer is adjusted over time to steer your effort toward the selected heart-rate target.',
+            'The controller uses a 10-second rolling heart-rate average and a 5-second control loop. That means the app smooths out noisy beat-to-beat changes before deciding whether to nudge power up or down. If your average heart rate sits below target, resistance can rise. If it drifts above target, resistance can back off.',
+            'This mode is designed for steady aerobic work where heart rate is the main anchor rather than a fixed watt target. It is especially useful on days when fatigue, temperature, hydration, or accumulated training load make your usual power numbers less reliable than your actual physiological response.',
+            'During the final 5 minutes, the workout moves into cooldown and the target is lowered to an easy recovery level. If fresh heart-rate data disappears or the trainer connection becomes unstable, the workout pauses until the signal is usable again.',
+          ],
+        );
+      case WorkoutType.powerErg:
+        return const _WorkoutInfoContent(
+          title: 'About Power-ERG',
+          summary:
+              'A structured ERG workout with a target power, warmup ramp, and heart-rate ceiling.',
+          paragraphs: <String>[
+            'Power-ERG is built around a power target, but it still watches heart rate to stop the session from getting too expensive aerobically. You set a target power, a maximum heart rate, and the active ride duration.',
+            'The workout starts with a 10-minute warmup ramp from 50% of target power up to 100%. It then holds the target power for the chosen duration, followed by a 5-minute cooldown at 60% of target power.',
+            'While you are in the active block, the app checks your rolling heart-rate average. If heart rate rises above the maximum you set, the app gradually reduces power at a fixed rate until heart rate settles back under the cap. This lets you aim at a power target without ignoring what your body is telling you that day.',
+            'Use Power-ERG when you want a more structured session than HR-ERG, but still want protection against drifting too far above your intended aerobic range.',
+          ],
+        );
+      case WorkoutType.zone2Assessment:
+        return const _WorkoutInfoContent(
+          title: 'About Zone 2 Assessment',
+          summary:
+              'A fixed protocol designed to help you judge aerobic durability and steady-state tolerance.',
+          paragraphs: <String>[
+            'Zone 2 Assessment is the most standardized workout in the app. You choose one assessment power and then complete a fixed 90-minute protocol so the summary can evaluate how stable your heart-rate response stays over a long steady ride.',
+            'The protocol is a 10-minute ramp from 50% of assessment power to 100%, followed by 75 minutes at the chosen power, then a 5-minute cooldown at 60%. Because the structure is fixed, the post-ride summary can compare early and late portions of the session more consistently than in a freer ride.',
+            'This mode is useful when you want to test whether a steady power still behaves like true Zone 2 for you. If heart rate drifts upward too much over time, the workout summary can help you see that the effort may be too high for long aerobic work.',
+            'For the cleanest result, use a power that you believe is near your upper steady aerobic range and aim to complete the session without interruptions. If heart-rate or trainer data goes stale, the app pauses until the signal is stable again.',
+          ],
+        );
+    }
   }
 
   bool _canStartWorkout({
@@ -643,6 +746,8 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       onReconnectSaved: connectController.reconnectHrMonitor,
       onDisconnect: connectController.disconnectHrMonitor,
       onConnect: connectController.connectHrMonitor,
+      helperText:
+          'HR straps can take a couple of scans to wake up. Wear the strap first and moisten the contacts if it does not appear right away.',
       compact:
           connectState.hrStatus == ConnectionStatus.connected &&
           connectState.trainerStatus == ConnectionStatus.connected &&
@@ -668,6 +773,8 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       onReconnectSaved: connectController.reconnectTrainer,
       onDisconnect: connectController.disconnectTrainer,
       onConnect: connectController.connectTrainer,
+      helperText:
+          'If the trainer connects but shows no response, wait a moment and try Reconnect saved once.',
       compact:
           connectState.hrStatus == ConnectionStatus.connected &&
           connectState.trainerStatus == ConnectionStatus.connected &&
@@ -1604,6 +1711,18 @@ class _SummaryContent extends StatelessWidget {
   }
 }
 
+class _WorkoutInfoContent {
+  const _WorkoutInfoContent({
+    required this.title,
+    required this.summary,
+    required this.paragraphs,
+  });
+
+  final String title;
+  final String summary;
+  final List<String> paragraphs;
+}
+
 class _DeviceSection extends StatelessWidget {
   const _DeviceSection({
     required this.title,
@@ -1619,6 +1738,7 @@ class _DeviceSection extends StatelessWidget {
     required this.onReconnectSaved,
     required this.onDisconnect,
     required this.onConnect,
+    this.helperText,
     this.compact = false,
   });
 
@@ -1635,6 +1755,7 @@ class _DeviceSection extends StatelessWidget {
   final Future<void> Function() onReconnectSaved;
   final Future<void> Function() onDisconnect;
   final Future<void> Function(String deviceId) onConnect;
+  final String? helperText;
   final bool compact;
 
   @override
@@ -1722,9 +1843,22 @@ class _DeviceSection extends StatelessWidget {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ],
+              if (helperText != null && helperText!.trim().isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  helperText!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               if (devices.isEmpty)
-                const Text('No devices yet. Tap Scan.')
+                Text(
+                  title == 'HR Monitor'
+                      ? 'No devices yet. Tap Scan and give the strap a few seconds to wake up.'
+                      : 'No devices yet. Tap Scan.',
+                )
               else
                 ...devices.map(
                   (device) => ListTile(

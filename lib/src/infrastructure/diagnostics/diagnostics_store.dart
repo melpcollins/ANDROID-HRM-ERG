@@ -153,6 +153,7 @@ class DiagnosticsStore {
   Future<List<Map<String, Object?>>> recentRuntimeEvents({
     int limit = 200,
   }) async {
+    await _waitForPendingIo();
     final runtimeFile = _runtimeFile;
     if (runtimeFile == null || !await runtimeFile.exists()) {
       if (_runtimeEventCache.length <= limit) {
@@ -171,6 +172,7 @@ class DiagnosticsStore {
   Future<List<SessionDiagnosticsRecord>> recentSessions({
     int limit = 20,
   }) async {
+    await _waitForPendingIo();
     final sessionsDirectory = _sessionsDirectory;
     if (sessionsDirectory == null || !await sessionsDirectory.exists()) {
       final values = _sessionCache.values.toList()
@@ -193,9 +195,10 @@ class DiagnosticsStore {
 
     final records = <SessionDiagnosticsRecord>[];
     for (final file in files.take(limit)) {
-      final decoded =
-          jsonDecode(await file.readAsString()) as Map<String, Object?>;
-      records.add(SessionDiagnosticsRecord.fromJson(decoded));
+      final record = await _readSessionFile(file);
+      if (record != null) {
+        records.add(record);
+      }
     }
     return records;
   }
@@ -206,10 +209,12 @@ class DiagnosticsStore {
   }) async {
     if (!isPersistent) {
       final tempFile = File(_joinPath(Directory.systemTemp.path, fileName));
-      await tempFile.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(_normalizeMap(payload)),
-        flush: true,
-      );
+      await _enqueueIo(() async {
+        await tempFile.writeAsString(
+          const JsonEncoder.withIndent('  ').convert(_normalizeMap(payload)),
+          flush: true,
+        );
+      });
       return tempFile;
     }
 
@@ -218,10 +223,12 @@ class DiagnosticsStore {
       await exportsDirectory.create(recursive: true);
     }
     final file = File(_joinPath(exportsDirectory.path, fileName));
-    await file.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(_normalizeMap(payload)),
-      flush: true,
-    );
+    await _enqueueIo(() async {
+      await file.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(_normalizeMap(payload)),
+        flush: true,
+      );
+    });
     return file;
   }
 
@@ -299,13 +306,16 @@ class DiagnosticsStore {
     if (sessionFile == null) {
       return;
     }
-    await sessionFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(normalized),
-      flush: true,
-    );
+    await _enqueueIo(() async {
+      await sessionFile.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(normalized),
+        flush: true,
+      );
+    });
   }
 
   Future<SessionDiagnosticsRecord?> _loadSession(String sessionId) async {
+    await _waitForPendingIo();
     final cached = _sessionCache[sessionId];
     if (cached != null) {
       return cached;
@@ -316,9 +326,10 @@ class DiagnosticsStore {
       return null;
     }
 
-    final decoded =
-        jsonDecode(await sessionFile.readAsString()) as Map<String, Object?>;
-    final record = SessionDiagnosticsRecord.fromJson(decoded);
+    final record = await _readSessionFile(sessionFile);
+    if (record == null) {
+      return null;
+    }
     _sessionCache[sessionId] = record;
     return record;
   }
@@ -404,6 +415,25 @@ class DiagnosticsStore {
     final next = _ioQueue.then((_) => action());
     _ioQueue = next.catchError((_) {});
     return next;
+  }
+
+  Future<void> _waitForPendingIo() async {
+    await _ioQueue;
+  }
+
+  Future<SessionDiagnosticsRecord?> _readSessionFile(File file) async {
+    try {
+      final decoded =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      return SessionDiagnosticsRecord.fromJson(decoded);
+    } on FormatException {
+      await _enqueueIo(() async {
+        if (await file.exists()) {
+          await file.delete();
+        }
+      });
+      return null;
+    }
   }
 }
 

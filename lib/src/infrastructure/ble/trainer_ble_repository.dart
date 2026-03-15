@@ -21,6 +21,10 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
   static const int _requestControlOpcode = 0x00;
   static const int _setTargetPowerOpcode = 0x05;
   static const Duration _staleThreshold = Duration(seconds: 10);
+  static const int _ftmsPreparationAttempts = 3;
+  static const Duration _ftmsPreparationRetryDelay = Duration(
+    milliseconds: 800,
+  );
 
   final StreamController<TrainerTelemetry> _telemetryController;
   TrainerTelemetry? _latestTelemetry;
@@ -41,13 +45,59 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
 
   @override
   Future<void> connect(String deviceId) async {
-    await super.connect(deviceId);
-    try {
-      await _prepareFtms();
-      _markAwaitingTelemetry();
-    } catch (_) {
-      await super.disconnect();
-      rethrow;
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (var attempt = 1; attempt <= _ftmsPreparationAttempts; attempt += 1) {
+      await super.connect(deviceId);
+      try {
+        await _prepareFtms(deviceId);
+        _markAwaitingTelemetry();
+        return;
+      } catch (error, stackTrace) {
+        lastError = error;
+        lastStackTrace = stackTrace;
+        final canRetry =
+            _isRecoverableFtmsPreparationError(error) &&
+            attempt < _ftmsPreparationAttempts;
+
+        recordRepositoryError(
+          'ble_ftms_prepare_failed',
+          error,
+          stackTrace,
+          telemetryProperties: <String, Object?>{
+            'result': canRetry ? 'retrying' : 'failure',
+            'trigger': 'connect',
+          },
+          diagnosticsData: <String, Object?>{
+            'device_id': deviceId,
+            'attempt': attempt,
+            'recoverable': canRetry,
+          },
+        );
+        await disconnect();
+
+        if (!canRetry) {
+          rethrow;
+        }
+
+        trackRepositoryEvent(
+          'ble_ftms_prepare_retry',
+          telemetryProperties: <String, Object?>{
+            'result': 'retrying',
+            'trigger': 'connect',
+          },
+          diagnosticsData: <String, Object?>{
+            'device_id': deviceId,
+            'attempt': attempt,
+          },
+        );
+        await Future<void>.delayed(_ftmsPreparationRetryDelay);
+      }
+    }
+
+    if (lastError != null && lastStackTrace != null) {
+      Error.throwWithStackTrace(lastError, lastStackTrace);
     }
   }
 
@@ -118,11 +168,8 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
     return selectionStore.saveTrainerId(id);
   }
 
-  Future<void> _prepareFtms() async {
-    final device = connectedDevice;
-    if (device == null) {
-      throw Exception('Trainer device missing while preparing FTMS.');
-    }
+  Future<void> _prepareFtms(String deviceId) async {
+    final device = connectedDevice ?? BluetoothDevice.fromId(deviceId);
 
     final services = await device.discoverServices();
     final ftmsService = services.firstWhere(
@@ -216,6 +263,15 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
 
   bool _isControlPointResponseFor(List<int> value, int requestOpcode) {
     return value.length >= 3 && value[0] == 0x80 && value[1] == requestOpcode;
+  }
+
+  bool _isRecoverableFtmsPreparationError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('missing while preparing ftms') ||
+        message.contains('device is disconnected') ||
+        message.contains('connection_failed_establishment') ||
+        message.contains('gatt') ||
+        message.contains('133');
   }
 
   @override

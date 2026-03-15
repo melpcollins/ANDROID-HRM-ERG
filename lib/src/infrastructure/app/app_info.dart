@@ -50,7 +50,7 @@ class AppInfo {
 
   static AppInfo placeholder() {
     return const AppInfo(
-      appName: 'Cycling HR ERG',
+      appName: 'Zone 2 Cycling by Heart',
       packageName: 'unknown',
       version: '0.0.0',
       buildNumber: '0',

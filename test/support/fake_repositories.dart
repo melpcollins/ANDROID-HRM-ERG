@@ -17,6 +17,7 @@ class FakeHrMonitorRepository implements HrMonitorRepository {
   final StreamController<HrSample> _hrSamplesController =
       StreamController<HrSample>.broadcast();
   final List<BleDeviceInfo> scanResults = <BleDeviceInfo>[];
+  final List<List<BleDeviceInfo>> queuedScanResults = <List<BleDeviceInfo>>[];
 
   String? savedDeviceId;
   int connectCalls = 0;
@@ -68,6 +69,9 @@ class FakeHrMonitorRepository implements HrMonitorRepository {
     Duration timeout = const Duration(seconds: 10),
   }) async {
     scanCalls += 1;
+    if (queuedScanResults.isNotEmpty) {
+      return List<BleDeviceInfo>.of(queuedScanResults.removeAt(0));
+    }
     return List<BleDeviceInfo>.of(scanResults);
   }
 }

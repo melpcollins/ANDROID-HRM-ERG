@@ -56,6 +56,7 @@ abstract class BleDeviceRepositoryBase {
   Future<List<BleDeviceInfo>> scanForDevices({
     Duration timeout = const Duration(seconds: 10),
   }) async {
+    await _stopActiveScanIfNeeded(trigger: 'scan_request');
     _trackEvent('ble_scan_started');
     logBleEvent('scan_started');
     final previousStatus = _status;
@@ -134,6 +135,7 @@ abstract class BleDeviceRepositoryBase {
   }
 
   Future<void> connect(String deviceId) async {
+    await _stopActiveScanIfNeeded(trigger: 'connect_request');
     _trackEvent(
       'ble_connect_attempt',
       diagnosticsData: <String, Object?>{'device_id': deviceId},
@@ -386,5 +388,24 @@ abstract class BleDeviceRepositoryBase {
         },
       ),
     );
+  }
+
+  Future<void> _stopActiveScanIfNeeded({required String trigger}) async {
+    try {
+      final isScanning = await FlutterBluePlus.isScanning.first;
+      if (!isScanning) {
+        return;
+      }
+
+      await FlutterBluePlus.stopScan();
+      await FlutterBluePlus.isScanning.where((value) => value == false).first;
+      _trackEvent(
+        'ble_scan_stopped',
+        telemetryProperties: <String, Object?>{'trigger': trigger},
+        diagnosticsData: <String, Object?>{'trigger': trigger},
+      );
+    } catch (_) {
+      // Best-effort only. A failed stop-scan should not block connect/scan.
+    }
   }
 }

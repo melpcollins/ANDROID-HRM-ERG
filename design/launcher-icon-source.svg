@@ -1,0 +1,21 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E03A33"/>
+      <stop offset="1" stop-color="#B21414"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="236" fill="url(#bg)"/>
+
+  <text
+    x="512"
+    y="690"
+    text-anchor="middle"
+    fill="#FFF8F2"
+    font-family="Segoe UI, Arial, sans-serif"
+    font-size="640"
+    font-weight="900"
+    letter-spacing="-36"
+  >Z2</text>
+</svg>

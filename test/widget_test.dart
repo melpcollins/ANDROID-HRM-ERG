@@ -300,7 +300,12 @@ void main() {
     expect(find.text('Trainer'), findsNothing);
     expect(find.text('HR-Connected'), findsOneWidget);
     expect(find.text('TR-Connected'), findsOneWidget);
-    expect(find.text('No devices yet. Tap Scan.'), findsNothing);
+    expect(
+      find.text(
+        'No devices yet. Tap Scan and give the strap a few seconds to wake up.',
+      ),
+      findsNothing,
+    );
 
     await tester.tap(find.text('HR-Connected'));
     await tester.pump();
@@ -308,12 +313,22 @@ void main() {
     expect(find.byKey(const ValueKey('compact-device-row')), findsNothing);
     expect(find.text('HR Monitor'), findsOneWidget);
     expect(find.text('Trainer'), findsOneWidget);
-    expect(find.text('No devices yet. Tap Scan.'), findsOneWidget);
+    expect(
+      find.text(
+        'No devices yet. Tap Scan and give the strap a few seconds to wake up.',
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Connected').last);
     await tester.pump();
 
-    expect(find.text('No devices yet. Tap Scan.'), findsNWidgets(2));
+    expect(
+      find.text(
+        'No devices yet. Tap Scan and give the strap a few seconds to wake up.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('compact connected device pills do not overflow on phone width', (
@@ -624,6 +639,24 @@ void main() {
     expect(find.text('Saved device: C3:E7:22:33'), findsNothing);
   });
 
+  testWidgets('shows HR strap wake-up guidance in the setup card', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+      autoConnectDevices: false,
+    );
+
+    expect(
+      find.text(
+        'HR straps can take a couple of scans to wake up. Wear the strap first and moisten the contacts if it does not appear right away.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('shows disconnect buttons for saved devices', (
     WidgetTester tester,
   ) async {
@@ -662,8 +695,34 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Support'), findsOneWidget);
+    expect(find.text('About HR-ERG'), findsOneWidget);
+    expect(find.text('About Power-ERG'), findsOneWidget);
+    expect(find.text('About Zone 2 Assessment'), findsOneWidget);
     expect(find.text('Export diagnostics'), findsOneWidget);
     expect(find.text('App info'), findsOneWidget);
+  });
+
+  testWidgets('opens workout info sheet from the app bar menu', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+    );
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('About HR-ERG'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('About HR-ERG'), findsOneWidget);
+    expect(
+      find.textContaining(
+        '10-second rolling heart-rate average and a 5-second control loop',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('opens support sheet from the app bar menu', (

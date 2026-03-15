@@ -98,7 +98,7 @@ void main() {
       final exporter = DiagnosticsExporter(
         diagnosticsStore: store,
         appInfo: const AppInfo(
-          appName: 'Cycling HR ERG',
+          appName: 'Zone 2 Cycling by Heart',
           packageName: 'com.example.placeholder',
           version: '1.0.0',
           buildNumber: '1',

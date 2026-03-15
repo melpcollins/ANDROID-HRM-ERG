@@ -217,6 +217,32 @@ void main() {
   });
 
   test(
+    'HR scan retries once when the strap does not appear immediately',
+    () async {
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      final hrRepo = FakeHrMonitorRepository()
+        ..queuedScanResults.add(const <BleDeviceInfo>[])
+        ..queuedScanResults.add(const <BleDeviceInfo>[
+          BleDeviceInfo(id: 'hr-1', name: 'Polar H10'),
+        ]);
+      final trainerRepo = FakeTrainerRepository();
+      final permissionService = FakeBlePermissionService();
+      final controller = buildController(
+        hrRepo: hrRepo,
+        trainerRepo: trainerRepo,
+        permissionService: permissionService,
+      );
+
+      await controller.initialize();
+      await controller.scanHrMonitors();
+
+      expect(hrRepo.scanCalls, 2);
+      expect(controller.state.hrDevices, hasLength(1));
+      expect(controller.state.hrDevices.first.name, 'Polar H10');
+    },
+  );
+
+  test(
     'connect persists friendly names and disconnect leaves saved selections intact',
     () async {
       SharedPreferences.setMockInitialValues(const <String, Object>{});
