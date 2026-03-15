@@ -18,18 +18,12 @@ class AlwaysReadyBlePermissionService implements BlePermissionService {
 
   @override
   Future<BleReadiness> checkStatus() async {
-    return const BleReadiness(
-      permissionsGranted: true,
-      bluetoothEnabled: true,
-    );
+    return const BleReadiness(permissionsGranted: true, bluetoothEnabled: true);
   }
 
   @override
   Future<BleReadiness> ensurePermissions() async {
-    return const BleReadiness(
-      permissionsGranted: true,
-      bluetoothEnabled: true,
-    );
+    return const BleReadiness(permissionsGranted: true, bluetoothEnabled: true);
   }
 
   @override

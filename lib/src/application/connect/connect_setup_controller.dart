@@ -7,7 +7,10 @@ import '../../domain/models/ble_device_info.dart';
 import '../../domain/models/connection_status.dart';
 import '../../domain/repositories/hr_monitor_repository.dart';
 import '../../domain/repositories/trainer_repository.dart';
+import '../../infrastructure/app/app_info.dart';
 import '../../infrastructure/ble/ble_permission_service.dart';
+import '../../infrastructure/diagnostics/diagnostics_store.dart';
+import '../../infrastructure/observability/app_telemetry.dart';
 import '../../infrastructure/storage/device_selection_store.dart';
 import 'connect_setup_state.dart';
 
@@ -17,12 +20,17 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     required TrainerRepository trainerRepository,
     required BlePermissionService blePermissionService,
     required DeviceSelectionStore deviceSelectionStore,
+    AppTelemetry? telemetry,
+    DiagnosticsStore? diagnosticsStore,
     Duration hrStaleThreshold = const Duration(seconds: 5),
     Duration trainerStaleThreshold = const Duration(seconds: 10),
   }) : _hrMonitorRepository = hrMonitorRepository,
        _trainerRepository = trainerRepository,
        _blePermissionService = blePermissionService,
        _deviceSelectionStore = deviceSelectionStore,
+       _telemetry =
+           telemetry ?? NoopAppTelemetry(appInfo: AppInfo.placeholder()),
+       _diagnosticsStore = diagnosticsStore ?? DiagnosticsStore.inMemory(),
        _hrStaleThreshold = hrStaleThreshold,
        _trainerStaleThreshold = trainerStaleThreshold,
        super(const ConnectSetupState());
@@ -31,6 +39,8 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
   final TrainerRepository _trainerRepository;
   final BlePermissionService _blePermissionService;
   final DeviceSelectionStore _deviceSelectionStore;
+  final AppTelemetry _telemetry;
+  final DiagnosticsStore _diagnosticsStore;
   final Duration _hrStaleThreshold;
   final Duration _trainerStaleThreshold;
 
@@ -83,6 +93,15 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
             bluetoothEnabled: enabled,
             readinessChecked: true,
           );
+          if (wasEnabled != enabled) {
+            _trackSetupEvent(
+              'ble_adapter_state',
+              telemetryProperties: <String, Object?>{
+                'result': enabled ? 'enabled' : 'disabled',
+              },
+              diagnosticsData: <String, Object?>{'bluetooth_enabled': enabled},
+            );
+          }
           if (!wasEnabled && enabled && state.permissionsGranted) {
             unawaited(_attemptSavedReconnects());
           }
@@ -123,8 +142,16 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
         persistName: _deviceSelectionStore.saveHrMonitorName,
         updateState: (name) => state = state.copyWith(selectedHrName: name),
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
       state = state.copyWith(scanningHr: false, hrError: error.toString());
+      _recordSetupError(
+        'ble_scan_hr_failed',
+        error,
+        stackTrace,
+        telemetryProperties: const <String, Object?>{
+          'device_role': 'hr_monitor',
+        },
+      );
     }
   }
 
@@ -146,10 +173,16 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
         updateState: (name) =>
             state = state.copyWith(selectedTrainerName: name),
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
       state = state.copyWith(
         scanningTrainer: false,
         trainerError: error.toString(),
+      );
+      _recordSetupError(
+        'ble_scan_trainer_failed',
+        error,
+        stackTrace,
+        telemetryProperties: const <String, Object?>{'device_role': 'trainer'},
       );
     }
   }
@@ -160,6 +193,14 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     }
 
     state = state.copyWith(clearHrError: true);
+    _trackSetupEvent(
+      'ble_connect_requested',
+      telemetryProperties: const <String, Object?>{'device_role': 'hr_monitor'},
+      diagnosticsData: <String, Object?>{
+        'device_role': 'hr_monitor',
+        'device_id': deviceId,
+      },
+    );
     try {
       await _hrMonitorRepository.connect(deviceId);
       final deviceName = _deviceNameFor(deviceId, state.hrDevices);
@@ -170,8 +211,17 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
       if (_hasFriendlyDeviceName(deviceName)) {
         await _deviceSelectionStore.saveHrMonitorName(deviceName!);
       }
-    } catch (error) {
+    } catch (error, stackTrace) {
       state = state.copyWith(hrError: error.toString());
+      _recordSetupError(
+        'ble_connect_hr_failed',
+        error,
+        stackTrace,
+        telemetryProperties: const <String, Object?>{
+          'device_role': 'hr_monitor',
+        },
+        diagnosticsData: <String, Object?>{'device_id': deviceId},
+      );
     }
   }
 
@@ -181,6 +231,14 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     }
 
     state = state.copyWith(clearTrainerError: true);
+    _trackSetupEvent(
+      'ble_connect_requested',
+      telemetryProperties: const <String, Object?>{'device_role': 'trainer'},
+      diagnosticsData: <String, Object?>{
+        'device_role': 'trainer',
+        'device_id': deviceId,
+      },
+    );
     try {
       await _trainerRepository.connect(deviceId);
       final deviceName = _deviceNameFor(deviceId, state.trainerDevices);
@@ -191,58 +249,130 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
       if (_hasFriendlyDeviceName(deviceName)) {
         await _deviceSelectionStore.saveTrainerName(deviceName!);
       }
-    } catch (error) {
+    } catch (error, stackTrace) {
       state = state.copyWith(trainerError: error.toString());
+      _recordSetupError(
+        'ble_connect_trainer_failed',
+        error,
+        stackTrace,
+        telemetryProperties: const <String, Object?>{'device_role': 'trainer'},
+        diagnosticsData: <String, Object?>{'device_id': deviceId},
+      );
     }
   }
 
   Future<void> disconnectHrMonitor() async {
     state = state.copyWith(clearHrError: true);
+    _trackSetupEvent(
+      'ble_disconnect_requested',
+      telemetryProperties: const <String, Object?>{'device_role': 'hr_monitor'},
+      diagnosticsData: const <String, Object?>{'device_role': 'hr_monitor'},
+    );
     try {
       await _hrMonitorRepository.disconnect();
-    } catch (error) {
+    } catch (error, stackTrace) {
       state = state.copyWith(hrError: error.toString());
+      _recordSetupError(
+        'ble_disconnect_hr_failed',
+        error,
+        stackTrace,
+        telemetryProperties: const <String, Object?>{
+          'device_role': 'hr_monitor',
+        },
+      );
     }
   }
 
   Future<void> disconnectTrainer() async {
     state = state.copyWith(clearTrainerError: true);
+    _trackSetupEvent(
+      'ble_disconnect_requested',
+      telemetryProperties: const <String, Object?>{'device_role': 'trainer'},
+      diagnosticsData: const <String, Object?>{'device_role': 'trainer'},
+    );
     try {
       await _trainerRepository.disconnect();
-    } catch (error) {
+    } catch (error, stackTrace) {
       state = state.copyWith(trainerError: error.toString());
+      _recordSetupError(
+        'ble_disconnect_trainer_failed',
+        error,
+        stackTrace,
+        telemetryProperties: const <String, Object?>{'device_role': 'trainer'},
+      );
     }
   }
 
-  Future<void> reconnectHrMonitor() async {
+  Future<void> reconnectHrMonitor({String trigger = 'manual'}) async {
     if (!await _ensureBleReady()) {
       return;
     }
 
     state = state.copyWith(clearHrError: true);
+    _trackSetupEvent(
+      'ble_reconnect_requested',
+      telemetryProperties: <String, Object?>{
+        'device_role': 'hr_monitor',
+        'trigger': trigger,
+      },
+      diagnosticsData: <String, Object?>{
+        'device_role': 'hr_monitor',
+        'trigger': trigger,
+      },
+    );
     try {
       await _hrMonitorRepository.reconnect();
-    } catch (error) {
+    } catch (error, stackTrace) {
       state = state.copyWith(hrError: error.toString());
+      _recordSetupError(
+        'ble_reconnect_hr_failed',
+        error,
+        stackTrace,
+        telemetryProperties: <String, Object?>{
+          'device_role': 'hr_monitor',
+          'trigger': trigger,
+        },
+      );
       rethrow;
     }
   }
 
-  Future<void> reconnectTrainer() async {
+  Future<void> reconnectTrainer({String trigger = 'manual'}) async {
     if (!await _ensureBleReady()) {
       return;
     }
 
     state = state.copyWith(clearTrainerError: true);
+    _trackSetupEvent(
+      'ble_reconnect_requested',
+      telemetryProperties: <String, Object?>{
+        'device_role': 'trainer',
+        'trigger': trigger,
+      },
+      diagnosticsData: <String, Object?>{
+        'device_role': 'trainer',
+        'trigger': trigger,
+      },
+    );
     try {
       await _trainerRepository.reconnect();
-    } catch (error) {
+    } catch (error, stackTrace) {
       state = state.copyWith(trainerError: error.toString());
+      _recordSetupError(
+        'ble_reconnect_trainer_failed',
+        error,
+        stackTrace,
+        telemetryProperties: <String, Object?>{
+          'device_role': 'trainer',
+          'trigger': trigger,
+        },
+      );
       rethrow;
     }
   }
 
   Future<void> requestBleAccess() async {
+    _trackSetupEvent('ble_permission_request');
     await _refreshBleReadiness(
       requestPermissions: true,
       reconnectIfReady: true,
@@ -257,6 +387,7 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
   }
 
   Future<void> openSystemSettings() async {
+    _trackSetupEvent('ble_open_settings');
     await _blePermissionService.openSystemSettings();
   }
 
@@ -284,6 +415,24 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
       await _attemptSavedReconnects();
     }
 
+    if (requestPermissions) {
+      _trackSetupEvent(
+        'ble_permission_result',
+        telemetryProperties: <String, Object?>{
+          'result': readiness.permissionsGranted ? 'granted' : 'denied',
+          'bluetooth_ready': readiness.bluetoothEnabled,
+          'permission_permanently_denied':
+              readiness.permissionPermanentlyDenied,
+        },
+        diagnosticsData: <String, Object?>{
+          'permissions_granted': readiness.permissionsGranted,
+          'bluetooth_enabled': readiness.bluetoothEnabled,
+          'permission_permanently_denied':
+              readiness.permissionPermanentlyDenied,
+        },
+      );
+    }
+
     return readiness;
   }
 
@@ -298,14 +447,14 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
     try {
       await Future.wait<void>([
         _attemptReconnect(
-          reconnect: reconnectHrMonitor,
+          reconnect: () => reconnectHrMonitor(trigger: 'auto_reconnect'),
           hasSavedDevice:
               state.selectedHrId != null &&
               state.selectedHrId!.isNotEmpty &&
               state.hrStatus == ConnectionStatus.disconnected,
         ),
         _attemptReconnect(
-          reconnect: reconnectTrainer,
+          reconnect: () => reconnectTrainer(trigger: 'auto_reconnect'),
           hasSavedDevice:
               state.selectedTrainerId != null &&
               state.selectedTrainerId!.isNotEmpty &&
@@ -438,6 +587,43 @@ class ConnectSetupController extends StateNotifier<ConnectSetupState> {
       _trainerHasFreshData = false;
       _applyTrainerStatus();
     });
+  }
+
+  void _trackSetupEvent(
+    String event, {
+    Map<String, Object?> telemetryProperties = const <String, Object?>{},
+    Map<String, Object?> diagnosticsData = const <String, Object?>{},
+  }) {
+    unawaited(_telemetry.track(event, properties: telemetryProperties));
+    unawaited(
+      _diagnosticsStore.recordRuntimeEvent(event, data: diagnosticsData),
+    );
+  }
+
+  void _recordSetupError(
+    String reason,
+    Object error,
+    StackTrace stackTrace, {
+    Map<String, Object?> telemetryProperties = const <String, Object?>{},
+    Map<String, Object?> diagnosticsData = const <String, Object?>{},
+  }) {
+    unawaited(
+      _telemetry.recordError(
+        Exception(reason),
+        stackTrace,
+        reason: reason,
+        properties: <String, Object?>{
+          'error_type': error.runtimeType.toString(),
+          ...telemetryProperties,
+        },
+      ),
+    );
+    unawaited(
+      _diagnosticsStore.recordRuntimeEvent(
+        reason,
+        data: <String, Object?>{'error': error.toString(), ...diagnosticsData},
+      ),
+    );
   }
 
   @override

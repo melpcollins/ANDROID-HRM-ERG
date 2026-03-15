@@ -11,9 +11,12 @@ import 'indoor_bike_data_parser.dart';
 
 class TrainerBleRepository extends BleDeviceRepositoryBase
     implements TrainerRepository {
-  TrainerBleRepository({required super.store})
-    : _telemetryController = StreamController<TrainerTelemetry>.broadcast(),
-      super(nameMatcher: _isLikelyTrainer);
+  TrainerBleRepository({
+    required super.store,
+    required super.telemetry,
+    required super.diagnosticsStore,
+  }) : _telemetryController = StreamController<TrainerTelemetry>.broadcast(),
+       super(nameMatcher: _isLikelyTrainer, deviceRole: 'trainer');
 
   static const int _requestControlOpcode = 0x00;
   static const int _setTargetPowerOpcode = 0x05;
@@ -68,30 +71,41 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
 
   @override
   Future<void> setTargetPower(int watts) async {
-    final characteristic = _controlPointCharacteristic;
-    if (characteristic == null) {
-      throw Exception(
-        'Trainer control point not available. Connect trainer first.',
-      );
-    }
+    try {
+      final characteristic = _controlPointCharacteristic;
+      if (characteristic == null) {
+        throw Exception(
+          'Trainer control point not available. Connect trainer first.',
+        );
+      }
 
-    final clamped = watts.clamp(50, 500);
+      final clamped = watts.clamp(50, 500);
 
-    if (!_hasControl) {
+      if (!_hasControl) {
+        await _writeControlPoint(characteristic, <int>[
+          _requestControlOpcode,
+        ], requestOpcode: _requestControlOpcode);
+        _hasControl = true;
+      }
+
+      final int lowByte = clamped & 0xFF;
+      final int highByte = (clamped >> 8) & 0xFF;
+
       await _writeControlPoint(characteristic, <int>[
-        _requestControlOpcode,
-      ], requestOpcode: _requestControlOpcode);
-      _hasControl = true;
+        _setTargetPowerOpcode,
+        lowByte,
+        highByte,
+      ], requestOpcode: _setTargetPowerOpcode);
+    } catch (error, stackTrace) {
+      recordRepositoryError(
+        'trainer_set_target_power_failed',
+        error,
+        stackTrace,
+        telemetryProperties: const <String, Object?>{'result': 'failure'},
+        diagnosticsData: <String, Object?>{'requested_watts': watts},
+      );
+      rethrow;
     }
-
-    final int lowByte = clamped & 0xFF;
-    final int highByte = (clamped >> 8) & 0xFF;
-
-    await _writeControlPoint(characteristic, <int>[
-      _setTargetPowerOpcode,
-      lowByte,
-      highByte,
-    ], requestOpcode: _setTargetPowerOpcode);
   }
 
   @override
@@ -162,10 +176,7 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
     _telemetrySubscription = telemetryCharacteristic.onValueReceived.listen((
       data,
     ) {
-      final telemetry = parseIndoorBikeData(
-        data,
-        timestamp: DateTime.now(),
-      );
+      final telemetry = parseIndoorBikeData(data, timestamp: DateTime.now());
       if (telemetry == null) {
         return;
       }
@@ -226,9 +237,15 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
     _staleTimer = Timer(_staleThreshold, () {
       if (currentStatus == ConnectionStatus.connected ||
           currentStatus == ConnectionStatus.connectedNoData) {
-        logBleEvent('stale_detected', details: const <String, Object?>{
-          'device': 'trainer',
-        });
+        logBleEvent(
+          'stale_detected',
+          details: const <String, Object?>{'device': 'trainer'},
+        );
+        trackRepositoryEvent(
+          'ble_stale_detected',
+          telemetryProperties: const <String, Object?>{'result': 'stale'},
+          diagnosticsData: const <String, Object?>{'stale_source': 'trainer'},
+        );
         emitStatus(ConnectionStatus.connectedNoData);
       }
     });

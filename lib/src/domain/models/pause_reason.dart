@@ -1,6 +1,1 @@
-enum PauseReason {
-  hrDisconnected,
-  trainerDisconnected,
-  trainerStale,
-  staleHr,
-}
+enum PauseReason { hrDisconnected, trainerDisconnected, trainerStale, staleHr }

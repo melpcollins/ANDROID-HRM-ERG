@@ -15,9 +15,8 @@ class AndroidBlePermissionService implements BlePermissionService {
   static const Permission _legacyScanPermission = Permission.locationWhenInUse;
 
   @override
-  Stream<bool> get bluetoothEnabledStream => FlutterBluePlus.adapterState
-      .map(_isBluetoothEnabled)
-      .distinct();
+  Stream<bool> get bluetoothEnabledStream =>
+      FlutterBluePlus.adapterState.map(_isBluetoothEnabled).distinct();
 
   @override
   Future<BleReadiness> checkStatus() async {

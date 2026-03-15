@@ -75,7 +75,10 @@ class MockWorkoutDebugController extends StateNotifier<MockWorkoutDebugState> {
   }
 
   void setSteadyHr(int bpm) {
-    state = state.copyWith(steadyHr: bpm, statusMessage: 'Steady HR set to $bpm bpm');
+    state = state.copyWith(
+      steadyHr: bpm,
+      statusMessage: 'Steady HR set to $bpm bpm',
+    );
   }
 
   void emitSteadyHrNow() {
@@ -114,9 +117,7 @@ class MockWorkoutDebugController extends StateNotifier<MockWorkoutDebugState> {
   void reset() {
     _stopScenario();
     _harness.reset();
-    state = const MockWorkoutDebugState(
-      statusMessage: 'Mock devices reset',
-    );
+    state = const MockWorkoutDebugState(statusMessage: 'Mock devices reset');
   }
 
   void _startScenario(

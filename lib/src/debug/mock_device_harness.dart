@@ -127,9 +127,7 @@ class MockHrMonitorRepository implements HrMonitorRepository {
   Future<List<BleDeviceInfo>> scanForDevices({
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    return const [
-      BleDeviceInfo(id: deviceId, name: 'Mock HR Monitor'),
-    ];
+    return const [BleDeviceInfo(id: deviceId, name: 'Mock HR Monitor')];
   }
 
   void reset() {
@@ -220,9 +218,7 @@ class MockTrainerRepository implements TrainerRepository {
   Future<List<BleDeviceInfo>> scanForDevices({
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    return const [
-      BleDeviceInfo(id: deviceId, name: 'Mock Trainer'),
-    ];
+    return const [BleDeviceInfo(id: deviceId, name: 'Mock Trainer')];
   }
 
   @override

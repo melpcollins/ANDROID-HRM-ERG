@@ -1,9 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 class AppDebugConfig {
-  const AppDebugConfig({
-    required this.useMockDevices,
-  });
+  const AppDebugConfig({required this.useMockDevices});
 
   factory AppDebugConfig.fromEnvironment() {
     const useMockDevicesFromEnvironment = bool.fromEnvironment(

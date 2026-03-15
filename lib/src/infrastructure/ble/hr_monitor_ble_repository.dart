@@ -11,9 +11,12 @@ import 'heart_rate_measurement_parser.dart';
 
 class HrMonitorBleRepository extends BleDeviceRepositoryBase
     implements HrMonitorRepository {
-  HrMonitorBleRepository({required super.store})
-    : _hrController = StreamController<HrSample>.broadcast(),
-      super(nameMatcher: _isLikelyHrMonitor);
+  HrMonitorBleRepository({
+    required super.store,
+    required super.telemetry,
+    required super.diagnosticsStore,
+  }) : _hrController = StreamController<HrSample>.broadcast(),
+       super(nameMatcher: _isLikelyHrMonitor, deviceRole: 'hr_monitor');
 
   static const Duration _staleThreshold = Duration(seconds: 5);
 
@@ -119,6 +122,17 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
             'contactSupported': measurement.contactSupported,
           },
         );
+        trackRepositoryEvent(
+          'ble_hr_contact_changed',
+          telemetryProperties: <String, Object?>{
+            'result': measurement.contactDetected == true ? 'detected' : 'lost',
+          },
+          diagnosticsData: <String, Object?>{
+            'contact_detected': measurement.contactDetected,
+            'bpm': measurement.bpm,
+            'contact_supported': measurement.contactSupported,
+          },
+        );
         _lastContactDetected = measurement.contactDetected;
       }
 
@@ -170,6 +184,13 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
         logBleEvent(
           'stale_detected',
           details: const <String, Object?>{'device': 'hrm'},
+        );
+        trackRepositoryEvent(
+          'ble_stale_detected',
+          telemetryProperties: const <String, Object?>{'result': 'stale'},
+          diagnosticsData: const <String, Object?>{
+            'stale_source': 'hr_monitor',
+          },
         );
         emitStatus(ConnectionStatus.connectedNoData);
       }

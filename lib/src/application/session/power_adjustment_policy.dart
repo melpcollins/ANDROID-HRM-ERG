@@ -46,10 +46,7 @@ class PowerAdjustmentPolicy {
     final nextNumerator = carryNumerator + (perMinute * loopSeconds);
     final watts = nextNumerator ~/ 60;
     final remainder = nextNumerator - (watts * 60);
-    return PowerAdjustmentResult(
-      watts: watts,
-      nextCarryNumerator: remainder,
-    );
+    return PowerAdjustmentResult(watts: watts, nextCarryNumerator: remainder);
   }
 }
 

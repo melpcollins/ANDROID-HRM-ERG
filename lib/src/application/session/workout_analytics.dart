@@ -123,8 +123,7 @@ class WorkoutAnalytics {
     if (elapsed < hrErgMinimumProvisionalDuration) {
       return const WorkoutSummary(
         analysisAvailable: false,
-        analysisMessage:
-            'Aerobic drift becomes available after 30 minutes.',
+        analysisMessage: 'Aerobic drift becomes available after 30 minutes.',
       );
     }
 
@@ -249,7 +248,8 @@ class WorkoutAnalytics {
     final relevant = samples
         .where(
           (sample) =>
-              !sample.timestamp.isBefore(start) && sample.timestamp.isBefore(end),
+              !sample.timestamp.isBefore(start) &&
+              sample.timestamp.isBefore(end),
         )
         .toList();
     if (relevant.isEmpty) {
@@ -260,15 +260,12 @@ class WorkoutAnalytics {
     return total / relevant.length;
   }
 
-  double? _averageHr(
-    List<HrSample> samples,
-    DateTime start,
-    DateTime end,
-  ) {
+  double? _averageHr(List<HrSample> samples, DateTime start, DateTime end) {
     final relevant = samples
         .where(
           (sample) =>
-              !sample.timestamp.isBefore(start) && sample.timestamp.isBefore(end),
+              !sample.timestamp.isBefore(start) &&
+              sample.timestamp.isBefore(end),
         )
         .toList();
     if (relevant.isEmpty) {

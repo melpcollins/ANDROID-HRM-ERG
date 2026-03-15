@@ -27,9 +27,11 @@ void main() {
     required int bpm,
   }) {
     final samples = <HrSample>[];
-    for (var t = start;
-        t.isBefore(end);
-        t = t.add(const Duration(minutes: 1))) {
+    for (
+      var t = start;
+      t.isBefore(end);
+      t = t.add(const Duration(minutes: 1))
+    ) {
       samples.add(HrSample(bpm: bpm, timestamp: t));
     }
     return samples;
@@ -41,9 +43,11 @@ void main() {
     required int watts,
   }) {
     final samples = <PowerSample>[];
-    for (var t = start;
-        t.isBefore(end);
-        t = t.add(const Duration(minutes: 1))) {
+    for (
+      var t = start;
+      t.isBefore(end);
+      t = t.add(const Duration(minutes: 1))
+    ) {
       samples.add(PowerSample(watts: watts, timestamp: t));
     }
     return samples;
@@ -137,52 +141,55 @@ void main() {
       });
     });
 
-    test('assessment transitions warm-up, steady block, cooldown, and complete', () {
-      fakeAsync((async) {
-        final hrRepo = FakeHrMonitorRepository();
-        final trainerRepo = FakeTrainerRepository();
-        final controller = WorkoutSessionController(
-          hrMonitorRepository: hrRepo,
-          trainerRepository: trainerRepo,
-        )..initialize();
+    test(
+      'assessment transitions warm-up, steady block, cooldown, and complete',
+      () {
+        fakeAsync((async) {
+          final hrRepo = FakeHrMonitorRepository();
+          final trainerRepo = FakeTrainerRepository();
+          final controller = WorkoutSessionController(
+            hrMonitorRepository: hrRepo,
+            trainerRepository: trainerRepo,
+          )..initialize();
 
-        connectDevices(hrRepo, trainerRepo);
-        async.flushMicrotasks();
+          connectDevices(hrRepo, trainerRepo);
+          async.flushMicrotasks();
 
-        controller.startWorkout(
-          const Zone2AssessmentConfig(assessmentPower: 180),
-        );
-        async.flushMicrotasks();
+          controller.startWorkout(
+            const Zone2AssessmentConfig(assessmentPower: 180),
+          );
+          async.flushMicrotasks();
 
-        hrRepo.emitHr(
-          135,
-          timestamp: DateTime.now().add(const Duration(hours: 2)),
-        );
-        async.flushMicrotasks();
+          hrRepo.emitHr(
+            135,
+            timestamp: DateTime.now().add(const Duration(hours: 2)),
+          );
+          async.flushMicrotasks();
 
-        expect(controller.state.phase, WorkoutPhase.warmup);
-        expect(trainerRepo.targetPowerWrites.first, 90);
+          expect(controller.state.phase, WorkoutPhase.warmup);
+          expect(trainerRepo.targetPowerWrites.first, 90);
 
-        async.elapse(const Duration(minutes: 5));
-        async.flushMicrotasks();
-        expect(controller.state.phase, WorkoutPhase.warmup);
-        expect(trainerRepo.targetPowerWrites.contains(135), isTrue);
+          async.elapse(const Duration(minutes: 5));
+          async.flushMicrotasks();
+          expect(controller.state.phase, WorkoutPhase.warmup);
+          expect(trainerRepo.targetPowerWrites.contains(135), isTrue);
 
-        async.elapse(const Duration(minutes: 5));
-        async.flushMicrotasks();
-        expect(controller.state.phase, WorkoutPhase.active);
-        expect(trainerRepo.targetPowerWrites.contains(180), isTrue);
+          async.elapse(const Duration(minutes: 5));
+          async.flushMicrotasks();
+          expect(controller.state.phase, WorkoutPhase.active);
+          expect(trainerRepo.targetPowerWrites.contains(180), isTrue);
 
-        async.elapse(const Duration(minutes: 75));
-        async.flushMicrotasks();
-        expect(controller.state.phase, WorkoutPhase.cooldown);
-        expect(trainerRepo.targetPowerWrites.contains(110), isTrue);
+          async.elapse(const Duration(minutes: 75));
+          async.flushMicrotasks();
+          expect(controller.state.phase, WorkoutPhase.cooldown);
+          expect(trainerRepo.targetPowerWrites.contains(110), isTrue);
 
-        async.elapse(const Duration(minutes: 5));
-        async.flushMicrotasks();
-        expect(controller.state.phase, WorkoutPhase.completed);
-      });
-    });
+          async.elapse(const Duration(minutes: 5));
+          async.flushMicrotasks();
+          expect(controller.state.phase, WorkoutPhase.completed);
+        });
+      },
+    );
 
     test('power ERG reduces power by 5 W/min above max HR and then holds', () {
       fakeAsync((async) {
@@ -241,60 +248,63 @@ void main() {
       });
     });
 
-    test('Power-ERG pauses when trainer telemetry stalls and resumes on recovery', () {
-      fakeAsync((async) {
-        final clock = async.getClock(DateTime(2026, 1, 1, 8));
-        final hrRepo = FakeHrMonitorRepository();
-        final trainerRepo = FakeTrainerRepository();
-        final controller = WorkoutSessionController(
-          hrMonitorRepository: hrRepo,
-          trainerRepository: trainerRepo,
-          nowProvider: () => clock.now(),
-        )..initialize();
+    test(
+      'Power-ERG pauses when trainer telemetry stalls and resumes on recovery',
+      () {
+        fakeAsync((async) {
+          final clock = async.getClock(DateTime(2026, 1, 1, 8));
+          final hrRepo = FakeHrMonitorRepository();
+          final trainerRepo = FakeTrainerRepository();
+          final controller = WorkoutSessionController(
+            hrMonitorRepository: hrRepo,
+            trainerRepository: trainerRepo,
+            nowProvider: () => clock.now(),
+          )..initialize();
 
-        connectDevices(hrRepo, trainerRepo);
-        async.flushMicrotasks();
+          connectDevices(hrRepo, trainerRepo);
+          async.flushMicrotasks();
 
-        controller.startWorkout(
-          PowerErgConfig(
-            targetPower: 180,
-            maxHr: 150,
-            activeDuration: const Duration(minutes: 30),
-          ),
-        );
-        async.flushMicrotasks();
+          controller.startWorkout(
+            PowerErgConfig(
+              targetPower: 180,
+              maxHr: 150,
+              activeDuration: const Duration(minutes: 30),
+            ),
+          );
+          async.flushMicrotasks();
 
-        hrRepo.emitHr(145, timestamp: clock.now());
-        async.flushMicrotasks();
-        async.elapse(const Duration(minutes: 10));
-        async.flushMicrotasks();
+          hrRepo.emitHr(145, timestamp: clock.now());
+          async.flushMicrotasks();
+          async.elapse(const Duration(minutes: 10));
+          async.flushMicrotasks();
 
-        trainerRepo.autoEmitTelemetryOnSetTargetPower = false;
-        trainerRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
-        async.flushMicrotasks();
+          trainerRepo.autoEmitTelemetryOnSetTargetPower = false;
+          trainerRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
+          async.flushMicrotasks();
 
-        final writesBeforePause = trainerRepo.targetPowerWrites.length;
-        hrRepo.emitHr(151, timestamp: clock.now());
-        async.flushMicrotasks();
+          final writesBeforePause = trainerRepo.targetPowerWrites.length;
+          hrRepo.emitHr(151, timestamp: clock.now());
+          async.flushMicrotasks();
 
-        expect(controller.state.phase, WorkoutPhase.paused);
-        expect(controller.state.pauseReason, PauseReason.trainerStale);
+          expect(controller.state.phase, WorkoutPhase.paused);
+          expect(controller.state.pauseReason, PauseReason.trainerStale);
 
-        async.elapse(const Duration(seconds: 20));
-        hrRepo.emitHr(151, timestamp: clock.now());
-        async.flushMicrotasks();
-        expect(trainerRepo.targetPowerWrites.length, writesBeforePause);
+          async.elapse(const Duration(seconds: 20));
+          hrRepo.emitHr(151, timestamp: clock.now());
+          async.flushMicrotasks();
+          expect(trainerRepo.targetPowerWrites.length, writesBeforePause);
 
-        trainerRepo.autoEmitTelemetryOnSetTargetPower = true;
-        trainerRepo.emitConnectionStatus(ConnectionStatus.connected);
-        trainerRepo.emitTelemetry(180, timestamp: clock.now());
-        hrRepo.emitHr(145, timestamp: clock.now());
-        async.flushMicrotasks();
+          trainerRepo.autoEmitTelemetryOnSetTargetPower = true;
+          trainerRepo.emitConnectionStatus(ConnectionStatus.connected);
+          trainerRepo.emitTelemetry(180, timestamp: clock.now());
+          hrRepo.emitHr(145, timestamp: clock.now());
+          async.flushMicrotasks();
 
-        expect(controller.state.phase, WorkoutPhase.active);
-        expect(controller.state.pauseReason, isNull);
-      });
-    });
+          expect(controller.state.phase, WorkoutPhase.active);
+          expect(controller.state.pauseReason, isNull);
+        });
+      },
+    );
 
     test('Power-ERG provisional aerobic drift appears after 30 minutes', () {
       fakeAsync((async) {
@@ -367,7 +377,10 @@ void main() {
         expect(controller.state.phase, WorkoutPhase.cooldown);
         expect(controller.state.summary, isNotNull);
         expect(controller.state.summary!.analysisAvailable, isTrue);
-        expect(controller.state.summary!.interpretation, 'This power sat in Zone 2.');
+        expect(
+          controller.state.summary!.interpretation,
+          'This power sat in Zone 2.',
+        );
       });
     });
   });
@@ -528,28 +541,31 @@ void main() {
       expect(summary.provisional, isTrue);
     });
 
-    test('Power-ERG provisional aerobic drift is unavailable before 30 minutes', () {
-      final analytics = const WorkoutAnalytics();
-      final start = DateTime(2026, 1, 1, 9);
+    test(
+      'Power-ERG provisional aerobic drift is unavailable before 30 minutes',
+      () {
+        final analytics = const WorkoutAnalytics();
+        final start = DateTime(2026, 1, 1, 9);
 
-      final summary = analytics.summarizePowerErgProvisional(
-        hrSamples: hrWindowSamples(
-          start: start,
-          end: start.add(const Duration(minutes: 25)),
-          bpm: 135,
-        ),
-        powerSamples: powerWindowSamples(
-          start: start,
-          end: start.add(const Duration(minutes: 25)),
-          watts: 180,
-        ),
-        rideStart: start,
-        analysisEnd: start.add(const Duration(minutes: 29)),
-      );
+        final summary = analytics.summarizePowerErgProvisional(
+          hrSamples: hrWindowSamples(
+            start: start,
+            end: start.add(const Duration(minutes: 25)),
+            bpm: 135,
+          ),
+          powerSamples: powerWindowSamples(
+            start: start,
+            end: start.add(const Duration(minutes: 25)),
+            watts: 180,
+          ),
+          rideStart: start,
+          analysisEnd: start.add(const Duration(minutes: 29)),
+        );
 
-      expect(summary.analysisAvailable, isFalse);
-      expect(summary.provisional, isTrue);
-    });
+        expect(summary.analysisAvailable, isFalse);
+        expect(summary.provisional, isTrue);
+      },
+    );
   });
 
   group('PowerAdjustmentPolicy', () {

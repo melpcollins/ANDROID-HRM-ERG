@@ -7,15 +7,21 @@ void main() {
     final averager = const PowerAverager();
     final now = DateTime(2026, 1, 1, 9, 0, 10);
 
-    final average = averager.average(
-      <PowerSample>[
-        PowerSample(watts: 100, timestamp: now.subtract(const Duration(seconds: 11))),
-        PowerSample(watts: 150, timestamp: now.subtract(const Duration(seconds: 8))),
-        PowerSample(watts: 200, timestamp: now.subtract(const Duration(seconds: 4))),
-        PowerSample(watts: 250, timestamp: now),
-      ],
-      now: now,
-    );
+    final average = averager.average(<PowerSample>[
+      PowerSample(
+        watts: 100,
+        timestamp: now.subtract(const Duration(seconds: 11)),
+      ),
+      PowerSample(
+        watts: 150,
+        timestamp: now.subtract(const Duration(seconds: 8)),
+      ),
+      PowerSample(
+        watts: 200,
+        timestamp: now.subtract(const Duration(seconds: 4)),
+      ),
+      PowerSample(watts: 250, timestamp: now),
+    ], now: now);
 
     expect(average, 200);
   });

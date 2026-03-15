@@ -13,19 +13,28 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('provider wiring selects mock repositories when debug mock mode is on', () {
-    final container = ProviderContainer(
-      overrides: [
-        appDebugConfigProvider.overrideWithValue(
-          const AppDebugConfig(useMockDevices: true),
-        ),
-      ],
-    );
-    addTearDown(container.dispose);
+  test(
+    'provider wiring selects mock repositories when debug mock mode is on',
+    () {
+      final container = ProviderContainer(
+        overrides: [
+          appDebugConfigProvider.overrideWithValue(
+            const AppDebugConfig(useMockDevices: true),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
 
-    expect(container.read(hrMonitorRepositoryProvider), isA<MockHrMonitorRepository>());
-    expect(container.read(trainerRepositoryProvider), isA<MockTrainerRepository>());
-  });
+      expect(
+        container.read(hrMonitorRepositoryProvider),
+        isA<MockHrMonitorRepository>(),
+      );
+      expect(
+        container.read(trainerRepositoryProvider),
+        isA<MockTrainerRepository>(),
+      );
+    },
+  );
 
   test('mock steady scenario drives HR-ERG without BLE hardware', () {
     fakeAsync((async) {

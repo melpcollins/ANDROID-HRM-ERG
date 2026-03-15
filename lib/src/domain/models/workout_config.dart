@@ -3,10 +3,7 @@ import 'package:equatable/equatable.dart';
 import 'workout_type.dart';
 
 abstract class WorkoutConfig extends Equatable {
-  const WorkoutConfig({
-    required this.workoutType,
-    required this.duration,
-  });
+  const WorkoutConfig({required this.workoutType, required this.duration});
 
   final WorkoutType workoutType;
   final Duration duration;
@@ -54,10 +51,7 @@ class PowerErgConfig extends WorkoutConfig {
     this.minPower = 50,
   }) : super(
          workoutType: WorkoutType.powerErg,
-         duration:
-             activeDuration +
-             warmupDuration +
-             cooldownDuration,
+         duration: activeDuration + warmupDuration + cooldownDuration,
        );
 
   final int targetPower;
@@ -102,12 +96,11 @@ class PowerErgConfig extends WorkoutConfig {
 }
 
 class Zone2AssessmentConfig extends WorkoutConfig {
-  const Zone2AssessmentConfig({
-    required this.assessmentPower,
-  }) : super(
-         workoutType: WorkoutType.zone2Assessment,
-         duration: const Duration(minutes: 90),
-       );
+  const Zone2AssessmentConfig({required this.assessmentPower})
+    : super(
+        workoutType: WorkoutType.zone2Assessment,
+        duration: const Duration(minutes: 90),
+      );
 
   final int assessmentPower;
 

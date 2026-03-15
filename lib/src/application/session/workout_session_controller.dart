@@ -7,12 +7,17 @@ import '../../domain/models/connection_status.dart';
 import '../../domain/models/hr_sample.dart';
 import '../../domain/models/pause_reason.dart';
 import '../../domain/models/power_sample.dart';
+import '../../domain/models/session_context.dart';
 import '../../domain/models/trainer_telemetry.dart';
 import '../../domain/models/workout_config.dart';
 import '../../domain/models/workout_phase.dart';
+import '../../domain/models/workout_summary.dart';
 import '../../domain/models/workout_type.dart';
 import '../../domain/repositories/hr_monitor_repository.dart';
 import '../../domain/repositories/trainer_repository.dart';
+import '../../infrastructure/app/app_info.dart';
+import '../../infrastructure/diagnostics/diagnostics_store.dart';
+import '../../infrastructure/observability/app_telemetry.dart';
 import 'hr_averager.dart';
 import 'power_averager.dart';
 import 'power_adjustment_policy.dart';
@@ -26,10 +31,11 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     required TrainerRepository trainerRepository,
     HrAverager hrAverager = const HrAverager(),
     PowerAverager powerAverager = const PowerAverager(),
-    PowerAdjustmentPolicy powerAdjustmentPolicy =
-        const PowerAdjustmentPolicy(),
+    PowerAdjustmentPolicy powerAdjustmentPolicy = const PowerAdjustmentPolicy(),
     WorkoutAnalytics workoutAnalytics = const WorkoutAnalytics(),
     WorkoutClock workoutClock = const WorkoutClock(),
+    AppTelemetry? telemetry,
+    DiagnosticsStore? diagnosticsStore,
     DateTime Function()? nowProvider,
   }) : _hrMonitorRepository = hrMonitorRepository,
        _trainerRepository = trainerRepository,
@@ -38,6 +44,9 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
        _powerAdjustmentPolicy = powerAdjustmentPolicy,
        _workoutAnalytics = workoutAnalytics,
        _workoutClock = workoutClock,
+       _telemetry =
+           telemetry ?? NoopAppTelemetry(appInfo: AppInfo.placeholder()),
+       _diagnosticsStore = diagnosticsStore ?? DiagnosticsStore.inMemory(),
        _now = nowProvider ?? DateTime.now,
        super(const WorkoutSessionState());
 
@@ -48,6 +57,8 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
   final PowerAdjustmentPolicy _powerAdjustmentPolicy;
   final WorkoutAnalytics _workoutAnalytics;
   final WorkoutClock _workoutClock;
+  final AppTelemetry _telemetry;
+  final DiagnosticsStore _diagnosticsStore;
   final DateTime Function() _now;
 
   final List<HrSample> _hrSamples = <HrSample>[];
@@ -67,6 +78,8 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
   DateTime? _lastHrSampleAt;
   bool _hadPauseOrDisconnect = false;
   bool _summaryCaptured = false;
+  bool _summaryTelemetryCaptured = false;
+  String? _sessionId;
 
   static const Duration _staleHrThreshold = Duration(seconds: 5);
 
@@ -97,6 +110,12 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       return;
     }
     state = state.copyWith(selectedWorkoutType: type, clearError: true);
+    _trackWorkoutEvent(
+      'workout_selected',
+      telemetryProperties: <String, Object?>{'workout_type': type.name},
+      diagnosticsData: <String, Object?>{'workout_type': type.name},
+      includeSession: false,
+    );
   }
 
   Future<void> startWorkout(WorkoutConfig config) async {
@@ -132,7 +151,10 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       remainingDuration: config.duration,
       targetHr: initialTargetHr,
       lastAdjustmentWatts: 0,
-      statusLabel: _workoutClock.labelForPhase(config.workoutType, initialPhase),
+      statusLabel: _workoutClock.labelForPhase(
+        config.workoutType,
+        initialPhase,
+      ),
       clearProvisionalSummary: true,
       clearSummary: true,
       clearError: true,
@@ -140,11 +162,21 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       clearPhaseBeforePause: true,
     );
 
-    try {
-      await _trainerRepository.setTargetPower(initialPower);
-      _lastCommandedPower = initialPower;
-    } catch (error) {
-      state = state.copyWith(error: error.toString());
+    await _beginSession(config);
+
+    final started = await _setTargetPowerSafely(
+      initialPower,
+      reason: 'workout_start',
+    );
+    if (!started) {
+      _trackWorkoutEvent(
+        'workout_start_failed',
+        telemetryProperties: <String, Object?>{
+          'workout_type': config.workoutType.name,
+        },
+        diagnosticsData: _configDetailsFor(config),
+      );
+      await _finishSession(outcome: 'start_failed');
       return;
     }
 
@@ -187,6 +219,17 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       clearPauseReason: true,
       clearPhaseBeforePause: true,
     );
+
+    _trackWorkoutEvent(
+      manual ? 'workout_manual_stop' : 'workout_completed',
+      telemetryProperties: <String, Object?>{
+        'result': manual ? 'manual_stop' : 'completed',
+      },
+      diagnosticsData: <String, Object?>{
+        'result': manual ? 'manual_stop' : 'completed',
+      },
+    );
+    await _finishSession(outcome: manual ? 'manual_stop' : 'completed');
   }
 
   Future<void> updateHrErgTargetHr(int targetHr) async {
@@ -227,13 +270,10 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     state = state.copyWith(activeConfig: nextConfig, clearError: true);
 
     if (state.phase == WorkoutPhase.active) {
-      try {
-        await _trainerRepository.setTargetPower(nextConfig.steadyPower);
-        _lastCommandedPower = nextConfig.steadyPower;
-        state = state.copyWith(clearError: true);
-      } catch (error) {
-        state = state.copyWith(error: error.toString());
-      }
+      await _setTargetPowerSafely(
+        nextConfig.steadyPower,
+        reason: 'power_erg_target_update',
+      );
     }
   }
 
@@ -326,9 +366,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     }
   }
 
-  Future<void> _handleHrErgCountdown({
-    required Duration remaining,
-  }) async {
+  Future<void> _handleHrErgCountdown({required Duration remaining}) async {
     _updateHrErgProvisionalSummary();
 
     if (state.phase == WorkoutPhase.cooldown) {
@@ -407,8 +445,13 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     if (nextPhase == WorkoutPhase.warmup) {
       final nextWarmupPower = config.warmupPowerAt(elapsed);
       if (nextWarmupPower != _lastCommandedPower) {
-        await _trainerRepository.setTargetPower(nextWarmupPower);
-        _lastCommandedPower = nextWarmupPower;
+        final updated = await _setTargetPowerSafely(
+          nextWarmupPower,
+          reason: 'assessment_warmup_ramp',
+        );
+        if (!updated) {
+          return;
+        }
       }
     }
 
@@ -417,8 +460,13 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     }
 
     if (nextPhase == WorkoutPhase.active) {
-      await _trainerRepository.setTargetPower(config.steadyPower);
-      _lastCommandedPower = config.steadyPower;
+      final updated = await _setTargetPowerSafely(
+        config.steadyPower,
+        reason: 'assessment_active_start',
+      );
+      if (!updated) {
+        return;
+      }
       state = state.copyWith(
         phase: WorkoutPhase.active,
         statusLabel: _workoutClock.labelForPhase(
@@ -431,8 +479,13 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
 
     if (nextPhase == WorkoutPhase.cooldown) {
       _captureSummaryIfNeeded(manualStop: false);
-      await _trainerRepository.setTargetPower(config.cooldownPower);
-      _lastCommandedPower = config.cooldownPower;
+      final updated = await _setTargetPowerSafely(
+        config.cooldownPower,
+        reason: 'assessment_cooldown_start',
+      );
+      if (!updated) {
+        return;
+      }
       state = state.copyWith(
         phase: WorkoutPhase.cooldown,
         statusLabel: _workoutClock.labelForPhase(
@@ -459,8 +512,13 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     if (nextPhase == WorkoutPhase.warmup) {
       final nextWarmupPower = config.warmupPowerAt(elapsed);
       if (nextWarmupPower != _lastCommandedPower) {
-        await _trainerRepository.setTargetPower(nextWarmupPower);
-        _lastCommandedPower = nextWarmupPower;
+        final updated = await _setTargetPowerSafely(
+          nextWarmupPower,
+          reason: 'power_erg_warmup_ramp',
+        );
+        if (!updated) {
+          return;
+        }
       }
     }
 
@@ -472,8 +530,13 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     }
 
     if (nextPhase == WorkoutPhase.active) {
-      await _trainerRepository.setTargetPower(config.steadyPower);
-      _lastCommandedPower = config.steadyPower;
+      final updated = await _setTargetPowerSafely(
+        config.steadyPower,
+        reason: 'power_erg_active_start',
+      );
+      if (!updated) {
+        return;
+      }
       state = state.copyWith(
         phase: WorkoutPhase.active,
         statusLabel: _workoutClock.labelForPhase(
@@ -486,8 +549,13 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
 
     if (nextPhase == WorkoutPhase.cooldown) {
       _captureSummaryIfNeeded(manualStop: false);
-      await _trainerRepository.setTargetPower(config.cooldownPower);
-      _lastCommandedPower = config.cooldownPower;
+      final updated = await _setTargetPowerSafely(
+        config.cooldownPower,
+        reason: 'power_erg_cooldown_start',
+      );
+      if (!updated) {
+        return;
+      }
       state = state.copyWith(
         phase: WorkoutPhase.cooldown,
         statusLabel: _workoutClock.labelForPhase(
@@ -536,21 +604,23 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       max(config.minPower, currentPower + result.watts),
     );
 
-    try {
-      await _trainerRepository.setTargetPower(nextPower);
-      _lastCommandedPower = nextPower;
+    final updated = await _setTargetPowerSafely(
+      nextPower,
+      reason: 'hr_erg_control_tick',
+    );
+    if (updated) {
       state = state.copyWith(
         averageHr: avgHr,
         lastAdjustmentWatts: result.watts,
         clearError: true,
       );
-    } catch (error) {
-      state = state.copyWith(error: error.toString());
     }
   }
 
   Future<void> _runPowerErgActiveControl(PowerErgConfig config) async {
-    if (!state.isRunning || state.isPaused || state.phase != WorkoutPhase.active) {
+    if (!state.isRunning ||
+        state.isPaused ||
+        state.phase != WorkoutPhase.active) {
       return;
     }
 
@@ -592,15 +662,15 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     final currentPower = _lastCommandedPower ?? config.steadyPower;
     final nextPower = max(config.minPower, currentPower + result.watts);
 
-    try {
-      await _trainerRepository.setTargetPower(nextPower);
-      _lastCommandedPower = nextPower;
+    final updated = await _setTargetPowerSafely(
+      nextPower,
+      reason: 'power_erg_control_tick',
+    );
+    if (updated) {
       state = state.copyWith(
         lastAdjustmentWatts: result.watts,
         clearError: true,
       );
-    } catch (error) {
-      state = state.copyWith(error: error.toString());
     }
   }
 
@@ -628,14 +698,27 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     if (state.isPaused && state.phaseBeforePause != null) {
       final resumePhase = state.phaseBeforePause!;
       final config = state.activeConfig;
+      final pauseReason = state.pauseReason;
       if (config == null) {
         return;
       }
       state = state.copyWith(
         phase: resumePhase,
-        statusLabel: _workoutClock.labelForPhase(config.workoutType, resumePhase),
+        statusLabel: _workoutClock.labelForPhase(
+          config.workoutType,
+          resumePhase,
+        ),
         clearPauseReason: true,
         clearPhaseBeforePause: true,
+      );
+      _trackWorkoutEvent(
+        'workout_resumed',
+        telemetryProperties: <String, Object?>{
+          if (pauseReason != null) 'pause_reason': pauseReason.name,
+        },
+        diagnosticsData: <String, Object?>{
+          if (pauseReason != null) 'pause_reason': pauseReason.name,
+        },
       );
     }
   }
@@ -683,6 +766,11 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
       pauseReason: reason,
       phaseBeforePause: state.isPaused ? state.phaseBeforePause : state.phase,
       statusLabel: _pauseLabel(reason),
+    );
+    _trackWorkoutEvent(
+      'workout_paused',
+      telemetryProperties: <String, Object?>{'pause_reason': reason.name},
+      diagnosticsData: <String, Object?>{'pause_reason': reason.name},
     );
   }
 
@@ -737,6 +825,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     _summaryCaptured = true;
     if (summary != null) {
       state = state.copyWith(summary: summary);
+      _trackSummary(summary);
     }
   }
 
@@ -754,7 +843,210 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     final liveCutoff = now.subtract(const Duration(seconds: 10));
     _hrSamples.removeWhere((sample) => sample.timestamp.isBefore(cutoff));
     _powerSamples.removeWhere((sample) => sample.timestamp.isBefore(cutoff));
-    _livePowerSamples.removeWhere((sample) => sample.timestamp.isBefore(liveCutoff));
+    _livePowerSamples.removeWhere(
+      (sample) => sample.timestamp.isBefore(liveCutoff),
+    );
+  }
+
+  Future<void> _beginSession(WorkoutConfig config) async {
+    final rideStart = _rideStart ?? _now();
+    final sessionId = 'session_${rideStart.toUtc().microsecondsSinceEpoch}';
+    _sessionId = sessionId;
+    final context = SessionContext(
+      sessionId: sessionId,
+      workoutType: config.workoutType,
+      startedAt: rideStart,
+      details: _configDetailsFor(config),
+    );
+    _telemetry.setSessionContext(context);
+    try {
+      await _diagnosticsStore.startSession(context);
+    } catch (error, stackTrace) {
+      _recordWorkoutError(
+        'diagnostics_session_start_failed',
+        error,
+        stackTrace,
+        includeSession: false,
+      );
+    }
+    _trackWorkoutEvent(
+      'workout_started',
+      telemetryProperties: <String, Object?>{
+        'workout_type': config.workoutType.name,
+      },
+      diagnosticsData: _configDetailsFor(config),
+    );
+  }
+
+  Future<void> _finishSession({required String outcome}) async {
+    final sessionId = _sessionId;
+    if (sessionId == null) {
+      _telemetry.clearSessionContext();
+      return;
+    }
+
+    try {
+      await _diagnosticsStore.closeSession(
+        sessionId: sessionId,
+        outcome: outcome,
+        summary: _summaryDetails(state.summary),
+      );
+    } catch (error, stackTrace) {
+      _recordWorkoutError(
+        'diagnostics_session_close_failed',
+        error,
+        stackTrace,
+        includeSession: false,
+      );
+    } finally {
+      _telemetry.clearSessionContext();
+      _sessionId = null;
+    }
+  }
+
+  Future<bool> _setTargetPowerSafely(
+    int watts, {
+    required String reason,
+  }) async {
+    try {
+      await _trainerRepository.setTargetPower(watts);
+      _lastCommandedPower = watts;
+      state = state.copyWith(clearError: true);
+      return true;
+    } catch (error, stackTrace) {
+      state = state.copyWith(error: error.toString());
+      _recordWorkoutError(
+        'trainer_target_power_failed',
+        error,
+        stackTrace,
+        diagnosticsData: <String, Object?>{
+          'requested_watts': watts,
+          'reason': reason,
+        },
+      );
+      return false;
+    }
+  }
+
+  void _trackSummary(WorkoutSummary summary) {
+    if (_summaryTelemetryCaptured) {
+      return;
+    }
+    _summaryTelemetryCaptured = true;
+    _trackWorkoutEvent(
+      'workout_summary',
+      telemetryProperties: _summaryDetails(summary),
+      diagnosticsData: _summaryDetails(summary),
+    );
+  }
+
+  Map<String, Object?> _configDetailsFor(WorkoutConfig config) {
+    return switch (config) {
+      HrErgConfig() => <String, Object?>{
+        'workout_type': config.workoutType.name,
+        'duration_minutes': config.duration.inMinutes,
+        'starting_watts': config.startingWatts,
+        'target_hr': config.targetHr,
+        'loop_seconds': config.loopSeconds,
+      },
+      PowerErgConfig() => <String, Object?>{
+        'workout_type': config.workoutType.name,
+        'duration_minutes': config.duration.inMinutes,
+        'target_power': config.targetPower,
+        'max_hr': config.maxHr,
+        'active_duration_minutes': config.activeDuration.inMinutes,
+      },
+      Zone2AssessmentConfig() => <String, Object?>{
+        'workout_type': config.workoutType.name,
+        'duration_minutes': config.duration.inMinutes,
+        'assessment_power': config.assessmentPower,
+      },
+      _ => <String, Object?>{'workout_type': config.workoutType.name},
+    };
+  }
+
+  Map<String, Object?> _summaryDetails(WorkoutSummary? summary) {
+    if (summary == null) {
+      return const <String, Object?>{};
+    }
+    return <String, Object?>{
+      'analysis_available': summary.analysisAvailable,
+      'provisional': summary.provisional,
+      if (summary.powerFadePercent != null)
+        'power_fade_pct': _roundToTenth(summary.powerFadePercent!),
+      if (summary.aerobicDriftPercent != null)
+        'aerobic_drift_pct': _roundToTenth(summary.aerobicDriftPercent!),
+      if (summary.zone2Estimate != null)
+        'zone2_lower_watts': summary.zone2Estimate!.lowerWatts,
+      if (summary.zone2Estimate != null)
+        'zone2_upper_watts': summary.zone2Estimate!.upperWatts,
+      if (summary.zone2Estimate != null)
+        'zone2_confidence': summary.zone2Estimate!.confidence,
+      if (summary.analysisMessage != null)
+        'analysis_message': summary.analysisMessage,
+      if (summary.interpretation != null)
+        'interpretation': summary.interpretation,
+    };
+  }
+
+  double _roundToTenth(double value) {
+    return (value * 10).round() / 10;
+  }
+
+  void _trackWorkoutEvent(
+    String event, {
+    Map<String, Object?> telemetryProperties = const <String, Object?>{},
+    Map<String, Object?> diagnosticsData = const <String, Object?>{},
+    bool includeSession = true,
+  }) {
+    unawaited(_telemetry.track(event, properties: telemetryProperties));
+    unawaited(
+      _diagnosticsStore.recordRuntimeEvent(event, data: diagnosticsData),
+    );
+    if (includeSession && _sessionId != null) {
+      unawaited(
+        _diagnosticsStore.recordSessionEvent(
+          _sessionId!,
+          event,
+          data: diagnosticsData,
+        ),
+      );
+    }
+  }
+
+  void _recordWorkoutError(
+    String reason,
+    Object error,
+    StackTrace stackTrace, {
+    Map<String, Object?> telemetryProperties = const <String, Object?>{},
+    Map<String, Object?> diagnosticsData = const <String, Object?>{},
+    bool includeSession = true,
+  }) {
+    final runtimeData = <String, Object?>{
+      'error': error.toString(),
+      ...diagnosticsData,
+    };
+    unawaited(
+      _telemetry.recordError(
+        Exception(reason),
+        stackTrace,
+        reason: reason,
+        properties: <String, Object?>{
+          'error_type': error.runtimeType.toString(),
+          ...telemetryProperties,
+        },
+      ),
+    );
+    unawaited(_diagnosticsStore.recordRuntimeEvent(reason, data: runtimeData));
+    if (includeSession && _sessionId != null) {
+      unawaited(
+        _diagnosticsStore.recordSessionEvent(
+          _sessionId!,
+          reason,
+          data: runtimeData,
+        ),
+      );
+    }
   }
 
   void _resetSessionData() {
@@ -769,6 +1061,9 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     _lastHrSampleAt = null;
     _hadPauseOrDisconnect = false;
     _summaryCaptured = false;
+    _summaryTelemetryCaptured = false;
+    _sessionId = null;
+    _telemetry.clearSessionContext();
   }
 
   @override
@@ -779,6 +1074,7 @@ class WorkoutSessionController extends StateNotifier<WorkoutSessionState> {
     _telemetrySubscription?.cancel();
     _hrStatusSubscription?.cancel();
     _trainerStatusSubscription?.cancel();
+    _telemetry.clearSessionContext();
     super.dispose();
   }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'application/connect/connect_setup_controller.dart';
 import 'application/connect/connect_setup_state.dart';
@@ -14,6 +15,11 @@ import 'domain/models/connection_status.dart';
 import 'domain/models/workout_config.dart';
 import 'domain/models/workout_summary.dart';
 import 'domain/models/workout_type.dart';
+
+const String _placeholderSupportEmail = 'support@example.com';
+const String _placeholderPrivacyUrl = 'https://example.com/privacy-policy';
+
+enum _AppMenuAction { support, exportDiagnostics, appInfo }
 
 class HrmErgApp extends StatelessWidget {
   const HrmErgApp({super.key});
@@ -168,7 +174,30 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
     });
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Cycling HR ERG')),
+      appBar: AppBar(
+        title: const Text('Cycling HR ERG'),
+        actions: [
+          PopupMenuButton<_AppMenuAction>(
+            onSelected: (action) {
+              unawaited(_handleAppMenuAction(action, connectState));
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem<_AppMenuAction>(
+                value: _AppMenuAction.support,
+                child: Text('Support'),
+              ),
+              PopupMenuItem<_AppMenuAction>(
+                value: _AppMenuAction.exportDiagnostics,
+                child: Text('Export diagnostics'),
+              ),
+              PopupMenuItem<_AppMenuAction>(
+                value: _AppMenuAction.appInfo,
+                child: Text('App info'),
+              ),
+            ],
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -214,6 +243,210 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _handleAppMenuAction(
+    _AppMenuAction action,
+    ConnectSetupState connectState,
+  ) async {
+    switch (action) {
+      case _AppMenuAction.support:
+        return _showSupportSheet(connectState);
+      case _AppMenuAction.exportDiagnostics:
+        return _exportDiagnostics();
+      case _AppMenuAction.appInfo:
+        return _showAppInfoSheet();
+    }
+  }
+
+  Future<void> _showSupportSheet(ConnectSetupState connectState) async {
+    final appInfo = ref.read(appInfoProvider);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Support',
+                    style: Theme.of(sheetContext).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Version: ${appInfo.versionLabel}'),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Saved HR monitor: ${_savedDeviceSummary(connectState.selectedHrName, connectState.selectedHrId)}',
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Saved trainer: ${_savedDeviceSummary(connectState.selectedTrainerName, connectState.selectedTrainerId)}',
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Export diagnostics includes recent runtime events and the last 20 workout sessions. BLE names and IDs are only included if you explicitly export the file.',
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('Support email: $_placeholderSupportEmail'),
+                  const SizedBox(height: 4),
+                  const Text('Privacy policy: $_placeholderPrivacyUrl'),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      unawaited(_exportDiagnostics());
+                    },
+                    child: const Text('Export diagnostics'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showAppInfoSheet() async {
+    final appInfo = ref.read(appInfoProvider);
+    final diagnosticsStore = ref.read(diagnosticsStoreProvider);
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'App info',
+                  style: Theme.of(sheetContext).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 12),
+                Text('App: ${appInfo.appName}'),
+                Text('Package: ${appInfo.packageName}'),
+                Text('Version: ${appInfo.versionLabel}'),
+                Text('Platform: ${appInfo.platform}'),
+                Text('OS: ${appInfo.operatingSystemVersion}'),
+                Text('Phone model: ${appInfo.phoneModel}'),
+                if (appInfo.androidApiLevel != null)
+                  Text('Android API: ${appInfo.androidApiLevel}'),
+                const SizedBox(height: 8),
+                Text(
+                  'Diagnostics path: ${diagnosticsStore.rootPath ?? 'in-memory only'}',
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _exportDiagnostics() async {
+    final exporter = ref.read(diagnosticsExporterProvider);
+    final telemetry = ref.read(appTelemetryProvider);
+    final diagnosticsStore = ref.read(diagnosticsStoreProvider);
+
+    unawaited(
+      telemetry.track(
+        'diagnostics_export_attempt',
+        properties: const <String, Object?>{'trigger': 'support_menu'},
+      ),
+    );
+    unawaited(
+      diagnosticsStore.recordRuntimeEvent(
+        'diagnostics_export_attempt',
+        data: const <String, Object?>{'trigger': 'support_menu'},
+      ),
+    );
+
+    try {
+      final exportFile = await exporter.buildExportFile();
+      final result = await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(exportFile.path)],
+          subject: 'Cycling HR ERG diagnostics export',
+          text:
+              'Cycling HR ERG diagnostics export. This file is only created after explicit user action.',
+        ),
+      );
+      unawaited(
+        telemetry.track(
+          'diagnostics_export_result',
+          properties: <String, Object?>{
+            'trigger': 'support_menu',
+            'result': result.status.name,
+          },
+        ),
+      );
+      unawaited(
+        diagnosticsStore.recordRuntimeEvent(
+          'diagnostics_export_result',
+          data: <String, Object?>{
+            'trigger': 'support_menu',
+            'result': result.status.name,
+            'file_path': exportFile.path,
+          },
+        ),
+      );
+
+      if (!mounted) {
+        return;
+      }
+      final message = switch (result.status) {
+        ShareResultStatus.success => 'Diagnostics ready to share.',
+        ShareResultStatus.dismissed =>
+          'Share sheet dismissed. The diagnostics file is still saved locally.',
+        ShareResultStatus.unavailable =>
+          'Share result unavailable. The diagnostics file is still saved locally.',
+      };
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error, stackTrace) {
+      unawaited(
+        telemetry.recordError(
+          Exception('diagnostics_export_failed'),
+          stackTrace,
+          reason: 'diagnostics_export_failed',
+          properties: <String, Object?>{
+            'error_type': error.runtimeType.toString(),
+          },
+        ),
+      );
+      unawaited(
+        diagnosticsStore.recordRuntimeEvent(
+          'diagnostics_export_failed',
+          data: <String, Object?>{'error': error.toString()},
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to export diagnostics right now.'),
+        ),
+      );
+    }
+  }
+
+  String _savedDeviceSummary(String? name, String? id) {
+    if (name != null && name.trim().isNotEmpty) {
+      return name;
+    }
+    if (id != null && id.trim().isNotEmpty) {
+      return id;
+    }
+    return 'Not selected';
   }
 
   bool _canStartWorkout({

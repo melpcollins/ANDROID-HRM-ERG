@@ -648,4 +648,61 @@ void main() {
 
     expect(find.text('Disconnect'), findsNWidgets(2));
   });
+
+  testWidgets('shows support menu actions from the app bar', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+    );
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Support'), findsOneWidget);
+    expect(find.text('Export diagnostics'), findsOneWidget);
+    expect(find.text('App info'), findsOneWidget);
+  });
+
+  testWidgets('opens support sheet from the app bar menu', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+    );
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Support'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Support email: support@example.com'), findsOneWidget);
+    expect(
+      find.text('Privacy policy: https://example.com/privacy-policy'),
+      findsOneWidget,
+    );
+    expect(find.text('Export diagnostics'), findsOneWidget);
+  });
+
+  testWidgets('opens app info sheet from the app bar menu', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(
+      tester,
+      hrRepo: FakeHrMonitorRepository(),
+      trainerRepo: FakeTrainerRepository(),
+    );
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('App info'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('App info'), findsOneWidget);
+    expect(find.textContaining('Diagnostics path:'), findsOneWidget);
+  });
 }
