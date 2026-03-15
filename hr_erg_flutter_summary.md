@@ -1,5 +1,7 @@
 # HR-ERG Flutter App Summary
 
+DO NOT READ OR EDIT - KEEPING FOR REFERENCE to DEMO only
+
 This document summarizes the key points and features discussed for building a **Heart-Rate-Controlled ERG app** for the **Wattbike Atom** using **Flutter** in VS Code. It is designed as a reference for development with Codex.
 
 ---

@@ -1,5 +1,7 @@
 # Initial Plan: HR-Controlled ERG Flutter App (Android First)
 
+DO NOT READ OR EDIT... KEEPING FOR DEMOs ONLY
+
 ## Summary
 - [ ] Build an Android-first Flutter MVP that pairs to a BLE HR monitor and Wattbike Atom, computes a 60-second HR average from 1-second samples, and updates ERG power every 20 seconds.
 - [ ] Execute in beginner-friendly phases: environment readiness, project scaffold, BLE integration, control loop, UI, and live validation.

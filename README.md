@@ -116,7 +116,7 @@ If `adb` is not on `PATH`, use:
 - `lib/src/application/connect`: connect/reconnect state logic
 - `lib/src/application/session`: shared workout session engine, analytics, and control logic
 - `lib/src/app.dart`: main UI
-- `use-cases/`: scenario docs for feature-level discussions
+- `Bluetooth-SQA-Plan.md`: manual pre-launch Bluetooth SQA checklist
 
 ## Troubleshooting
 - Device not found: ensure BLE device is awake and advertising, keep phone close, then re-run `Scan`.
