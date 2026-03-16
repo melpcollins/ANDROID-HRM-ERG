@@ -58,6 +58,17 @@ Map<String, Object> normalizeTelemetryProperties(Map<String, Object?> raw) {
   return normalized;
 }
 
+Map<String, Object> normalizeAnalyticsParameters(Map<String, Object?> raw) {
+  final normalized = <String, Object>{};
+  for (final entry in raw.entries) {
+    final value = _normalizeAnalyticsValue(entry.value);
+    if (value != null) {
+      normalized[entry.key] = value;
+    }
+  }
+  return normalized;
+}
+
 String normalizeTelemetryEventName(String event) {
   final sanitized = event
       .trim()
@@ -88,4 +99,11 @@ Object? _normalizeTelemetryValue(Object? value) {
     return value.inMilliseconds;
   }
   return value.toString();
+}
+
+Object? _normalizeAnalyticsValue(Object? value) {
+  if (value is bool) {
+    return value ? 1 : 0;
+  }
+  return _normalizeTelemetryValue(value);
 }

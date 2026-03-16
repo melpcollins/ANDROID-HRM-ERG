@@ -29,18 +29,6 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
   Stream<HrSample> get hrSamples => _hrController.stream;
 
   @override
-  Future<void> connect(String deviceId) async {
-    await super.connect(deviceId);
-    try {
-      await _subscribeToHeartRate(deviceId);
-      _markAwaitingFreshHr();
-    } catch (_) {
-      await super.disconnect();
-      rethrow;
-    }
-  }
-
-  @override
   Future<void> reconnect() async {
     await super.reconnect();
   }
@@ -63,6 +51,17 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
   @override
   Future<void> persistSelectedDeviceId(String id) {
     return selectionStore.saveHrMonitorId(id);
+  }
+
+  @override
+  Future<void> onConnected(String deviceId) async {
+    try {
+      await _subscribeToHeartRate(deviceId);
+      _markAwaitingFreshHr();
+    } catch (_) {
+      await disconnect();
+      rethrow;
+    }
   }
 
   Future<void> _subscribeToHeartRate(String deviceId) async {
@@ -140,7 +139,7 @@ class HrMonitorBleRepository extends BleDeviceRepositoryBase
           measurement.contactDetected == false) {
         _staleTimer?.cancel();
         _staleTimer = null;
-        emitStatus(ConnectionStatus.disconnected);
+        emitStatus(ConnectionStatus.connectedNoData);
         return;
       }
 

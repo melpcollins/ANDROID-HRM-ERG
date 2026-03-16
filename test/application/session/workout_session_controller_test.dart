@@ -141,6 +141,40 @@ void main() {
       });
     });
 
+    test('HR contact loss pauses as stale HR instead of disconnect', () {
+      fakeAsync((async) {
+        final hrRepo = FakeHrMonitorRepository();
+        final trainerRepo = FakeTrainerRepository();
+        final controller = WorkoutSessionController(
+          hrMonitorRepository: hrRepo,
+          trainerRepository: trainerRepo,
+        )..initialize();
+
+        connectDevices(hrRepo, trainerRepo);
+        async.flushMicrotasks();
+
+        controller.startWorkout(
+          const HrErgConfig(
+            startingWatts: 180,
+            targetHr: 120,
+            loopSeconds: 20,
+            duration: Duration(minutes: 30),
+          ),
+        );
+        async.flushMicrotasks();
+
+        hrRepo.emitHr(118);
+        async.flushMicrotasks();
+        expect(controller.state.phase, WorkoutPhase.active);
+
+        hrRepo.emitConnectionStatus(ConnectionStatus.connectedNoData);
+        async.flushMicrotasks();
+
+        expect(controller.state.phase, WorkoutPhase.paused);
+        expect(controller.state.pauseReason, PauseReason.staleHr);
+      });
+    });
+
     test(
       'assessment transitions warm-up, steady block, cooldown, and complete',
       () {

@@ -22,9 +22,7 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
   static const int _setTargetPowerOpcode = 0x05;
   static const Duration _staleThreshold = Duration(seconds: 10);
   static const int _ftmsPreparationAttempts = 3;
-  static const Duration _ftmsPreparationRetryDelay = Duration(
-    milliseconds: 800,
-  );
+  static const Duration _ftmsPreparationRetryDelay = Duration(seconds: 3);
 
   final StreamController<TrainerTelemetry> _telemetryController;
   TrainerTelemetry? _latestTelemetry;
@@ -44,12 +42,11 @@ class TrainerBleRepository extends BleDeviceRepositoryBase
   }
 
   @override
-  Future<void> connect(String deviceId) async {
+  Future<void> onConnected(String deviceId) async {
     Object? lastError;
     StackTrace? lastStackTrace;
 
     for (var attempt = 1; attempt <= _ftmsPreparationAttempts; attempt += 1) {
-      await super.connect(deviceId);
       try {
         await _prepareFtms(deviceId);
         _markAwaitingTelemetry();

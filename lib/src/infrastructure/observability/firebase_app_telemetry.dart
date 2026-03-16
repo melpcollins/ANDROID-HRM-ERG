@@ -26,7 +26,7 @@ class FirebaseAppTelemetry implements AppTelemetry {
   }) async {
     await _analytics.logEvent(
       name: normalizeTelemetryEventName(event),
-      parameters: _mergedProperties(properties),
+      parameters: normalizeAnalyticsParameters(_mergedProperties(properties)),
     );
   }
 

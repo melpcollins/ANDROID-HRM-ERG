@@ -739,9 +739,11 @@ void main() {
     await tester.tap(find.text('Support'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Support email: support@example.com'), findsOneWidget);
+    expect(find.text('Support email: melpcollins@gmail.com'), findsOneWidget);
     expect(
-      find.text('Privacy policy: https://example.com/privacy-policy'),
+      find.text(
+        'Privacy policy: https://melpcollins.github.io/ANDROID-HRM-ERG/privacy-policy.html',
+      ),
       findsOneWidget,
     );
     expect(find.text('Export diagnostics'), findsOneWidget);

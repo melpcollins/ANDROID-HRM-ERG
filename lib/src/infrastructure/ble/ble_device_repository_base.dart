@@ -33,6 +33,7 @@ abstract class BleDeviceRepositoryBase {
 
   BluetoothDevice? _device;
   StreamSubscription<BluetoothConnectionState>? _connectionSubscription;
+  Future<void>? _connectionAttempt;
 
   final StreamController<ConnectionStatus> _connectionController =
       StreamController<ConnectionStatus>.broadcast();
@@ -135,62 +136,16 @@ abstract class BleDeviceRepositoryBase {
   }
 
   Future<void> connect(String deviceId) async {
-    await _stopActiveScanIfNeeded(trigger: 'connect_request');
-    _trackEvent(
-      'ble_connect_attempt',
-      diagnosticsData: <String, Object?>{'device_id': deviceId},
+    await _runConnectionAttempt(
+      deviceId: deviceId,
+      requestTrigger: 'connect_request',
+      attemptEvent: 'ble_connect_attempt',
+      resultEvent: 'ble_connect_result',
+      failureReason: 'ble_connect_failed',
+      inProgressStatus: ConnectionStatus.connecting,
+      successLogEvent: 'connected',
+      failureLogEvent: 'connect_failed',
     );
-    final nextDevice = BluetoothDevice.fromId(deviceId);
-
-    await _connectionSubscription?.cancel();
-    _device = nextDevice;
-    emitStatus(ConnectionStatus.connecting);
-
-    _connectionSubscription = nextDevice.connectionState.listen((state) {
-      switch (state) {
-        case BluetoothConnectionState.connected:
-          emitStatus(ConnectionStatus.connectedNoData);
-          break;
-        case BluetoothConnectionState.disconnected:
-          _device = null;
-          emitStatus(ConnectionStatus.disconnected);
-          break;
-        case _:
-          emitStatus(ConnectionStatus.connecting);
-          break;
-      }
-    });
-
-    try {
-      await nextDevice.connect(timeout: const Duration(seconds: 20));
-      await persistSelectedDeviceId(deviceId);
-      logBleEvent(
-        'connected',
-        details: <String, Object?>{'deviceId': deviceId},
-      );
-      _trackEvent(
-        'ble_connect_result',
-        telemetryProperties: const <String, Object?>{'result': 'success'},
-        diagnosticsData: <String, Object?>{
-          'result': 'success',
-          'device_id': deviceId,
-        },
-      );
-      emitStatus(ConnectionStatus.connectedNoData);
-    } catch (error, stackTrace) {
-      emitStatus(ConnectionStatus.disconnected);
-      _trackEvent(
-        'ble_connect_result',
-        telemetryProperties: const <String, Object?>{'result': 'failure'},
-        diagnosticsData: <String, Object?>{
-          'result': 'failure',
-          'device_id': deviceId,
-          'error': error.toString(),
-        },
-      );
-      _recordSanitizedError('ble_connect_failed', error, stackTrace);
-      rethrow;
-    }
   }
 
   Future<void> disconnect() async {
@@ -207,46 +162,20 @@ abstract class BleDeviceRepositoryBase {
       return;
     }
 
-    _trackEvent(
-      'ble_reconnect_attempt',
-      diagnosticsData: <String, Object?>{'device_id': savedId},
-    );
     logBleEvent(
       'reconnect_started',
       details: <String, Object?>{'deviceId': savedId},
     );
-    emitStatus(ConnectionStatus.reconnecting);
-    try {
-      await connect(savedId);
-      logBleEvent(
-        'reconnect_success',
-        details: <String, Object?>{'deviceId': savedId},
-      );
-      _trackEvent(
-        'ble_reconnect_result',
-        telemetryProperties: const <String, Object?>{'result': 'success'},
-        diagnosticsData: <String, Object?>{
-          'result': 'success',
-          'device_id': savedId,
-        },
-      );
-    } catch (error, stackTrace) {
-      logBleEvent(
-        'reconnect_failed',
-        details: <String, Object?>{'deviceId': savedId},
-      );
-      _trackEvent(
-        'ble_reconnect_result',
-        telemetryProperties: const <String, Object?>{'result': 'failure'},
-        diagnosticsData: <String, Object?>{
-          'result': 'failure',
-          'device_id': savedId,
-          'error': error.toString(),
-        },
-      );
-      _recordSanitizedError('ble_reconnect_failed', error, stackTrace);
-      rethrow;
-    }
+    await _runConnectionAttempt(
+      deviceId: savedId,
+      requestTrigger: 'reconnect_request',
+      attemptEvent: 'ble_reconnect_attempt',
+      resultEvent: 'ble_reconnect_result',
+      failureReason: 'ble_reconnect_failed',
+      inProgressStatus: ConnectionStatus.reconnecting,
+      successLogEvent: 'reconnect_success',
+      failureLogEvent: 'reconnect_failed',
+    );
   }
 
   Future<String?> getSavedDeviceId();
@@ -256,6 +185,9 @@ abstract class BleDeviceRepositoryBase {
   DeviceSelectionStore get selectionStore => _store;
 
   BluetoothDevice? get connectedDevice => _device;
+
+  @protected
+  Future<void> onConnected(String deviceId) async {}
 
   @protected
   void emitStatus(ConnectionStatus status) {
@@ -388,6 +320,137 @@ abstract class BleDeviceRepositoryBase {
         },
       ),
     );
+  }
+
+  Future<void> _runConnectionAttempt({
+    required String deviceId,
+    required String requestTrigger,
+    required String attemptEvent,
+    required String resultEvent,
+    required String failureReason,
+    required ConnectionStatus inProgressStatus,
+    required String successLogEvent,
+    required String failureLogEvent,
+  }) async {
+    if (_connectionAttempt != null) {
+      _trackEvent(
+        '${attemptEvent}_suppressed',
+        telemetryProperties: const <String, Object?>{'result': 'suppressed'},
+        diagnosticsData: <String, Object?>{
+          'device_id': deviceId,
+          'reason': 'in_flight',
+        },
+      );
+      return;
+    }
+    if (currentStatus != ConnectionStatus.disconnected) {
+      _trackEvent(
+        '${attemptEvent}_suppressed',
+        telemetryProperties: const <String, Object?>{'result': 'suppressed'},
+        diagnosticsData: <String, Object?>{
+          'device_id': deviceId,
+          'reason': 'invalid_state',
+          'status': currentStatus.name,
+        },
+      );
+      return;
+    }
+
+    final guard = Completer<void>();
+    _connectionAttempt = guard.future;
+    try {
+      await _stopActiveScanIfNeeded(trigger: requestTrigger);
+      _trackEvent(
+        attemptEvent,
+        diagnosticsData: <String, Object?>{'device_id': deviceId},
+      );
+      await _connectDevice(deviceId, inProgressStatus: inProgressStatus);
+      await persistSelectedDeviceId(deviceId);
+      await onConnected(deviceId);
+      logBleEvent(
+        successLogEvent,
+        details: <String, Object?>{'deviceId': deviceId},
+      );
+      _trackEvent(
+        resultEvent,
+        telemetryProperties: const <String, Object?>{'result': 'success'},
+        diagnosticsData: <String, Object?>{
+          'result': 'success',
+          'device_id': deviceId,
+        },
+      );
+      emitStatus(ConnectionStatus.connectedNoData);
+    } catch (error, stackTrace) {
+      await _resetConnectionTransport(disconnectDevice: true);
+      emitStatus(ConnectionStatus.disconnected);
+      logBleEvent(
+        failureLogEvent,
+        details: <String, Object?>{'deviceId': deviceId},
+      );
+      _trackEvent(
+        resultEvent,
+        telemetryProperties: const <String, Object?>{'result': 'failure'},
+        diagnosticsData: <String, Object?>{
+          'result': 'failure',
+          'device_id': deviceId,
+          'error': error.toString(),
+        },
+      );
+      _recordSanitizedError(
+        failureReason,
+        error,
+        stackTrace,
+        diagnosticsData: <String, Object?>{'device_id': deviceId},
+      );
+      rethrow;
+    } finally {
+      guard.complete();
+      _connectionAttempt = null;
+    }
+  }
+
+  Future<void> _connectDevice(
+    String deviceId, {
+    required ConnectionStatus inProgressStatus,
+  }) async {
+    final nextDevice = BluetoothDevice.fromId(deviceId);
+
+    await _connectionSubscription?.cancel();
+    _device = nextDevice;
+    emitStatus(inProgressStatus);
+
+    _connectionSubscription = nextDevice.connectionState.listen((state) {
+      switch (state) {
+        case BluetoothConnectionState.connected:
+          emitStatus(ConnectionStatus.connectedNoData);
+          break;
+        case BluetoothConnectionState.disconnected:
+          _device = null;
+          emitStatus(ConnectionStatus.disconnected);
+          break;
+        case _:
+          emitStatus(inProgressStatus);
+          break;
+      }
+    });
+
+    await nextDevice.connect(timeout: const Duration(seconds: 20));
+  }
+
+  Future<void> _resetConnectionTransport({
+    required bool disconnectDevice,
+  }) async {
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
+    final device = _device;
+    _device = null;
+    if (disconnectDevice && device != null) {
+      try {
+        await device.disconnect();
+      } catch (_) {
+        // Best-effort only. Cleanup should not mask the original failure.
+      }
+    }
   }
 
   Future<void> _stopActiveScanIfNeeded({required String trigger}) async {

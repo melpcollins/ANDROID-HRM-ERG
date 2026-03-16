@@ -18,12 +18,16 @@ class FakeHrMonitorRepository implements HrMonitorRepository {
       StreamController<HrSample>.broadcast();
   final List<BleDeviceInfo> scanResults = <BleDeviceInfo>[];
   final List<List<BleDeviceInfo>> queuedScanResults = <List<BleDeviceInfo>>[];
+  final List<String> callLog = <String>[];
 
   String? savedDeviceId;
   int connectCalls = 0;
   int disconnectCalls = 0;
   int reconnectCalls = 0;
   int scanCalls = 0;
+  Future<void> Function(String deviceId)? connectHandler;
+  Future<void> Function()? disconnectHandler;
+  Future<void> Function()? reconnectHandler;
 
   @override
   Stream<ConnectionStatus> get connectionStatus =>
@@ -46,12 +50,22 @@ class FakeHrMonitorRepository implements HrMonitorRepository {
   Future<void> connect(String deviceId) async {
     savedDeviceId = deviceId;
     connectCalls += 1;
+    callLog.add('hr_connect:$deviceId');
+    if (connectHandler != null) {
+      await connectHandler!(deviceId);
+      return;
+    }
     _connectionStatusController.add(ConnectionStatus.connected);
   }
 
   @override
   Future<void> disconnect() async {
     disconnectCalls += 1;
+    callLog.add('hr_disconnect');
+    if (disconnectHandler != null) {
+      await disconnectHandler!();
+      return;
+    }
     _connectionStatusController.add(ConnectionStatus.disconnected);
   }
 
@@ -61,6 +75,11 @@ class FakeHrMonitorRepository implements HrMonitorRepository {
   @override
   Future<void> reconnect() async {
     reconnectCalls += 1;
+    callLog.add('hr_reconnect');
+    if (reconnectHandler != null) {
+      await reconnectHandler!();
+      return;
+    }
     _connectionStatusController.add(ConnectionStatus.connected);
   }
 
@@ -88,6 +107,7 @@ class FakeTrainerRepository implements TrainerRepository {
 
   final List<int> targetPowerWrites = <int>[];
   final List<BleDeviceInfo> scanResults = <BleDeviceInfo>[];
+  final List<String> callLog = <String>[];
   bool autoEmitTelemetryOnSetTargetPower = true;
   int currentWatts = 0;
   int? currentCadence;
@@ -96,6 +116,9 @@ class FakeTrainerRepository implements TrainerRepository {
   int disconnectCalls = 0;
   int reconnectCalls = 0;
   int scanCalls = 0;
+  Future<void> Function(String deviceId)? connectHandler;
+  Future<void> Function()? disconnectHandler;
+  Future<void> Function()? reconnectHandler;
 
   @override
   Stream<ConnectionStatus> get connectionStatus =>
@@ -124,12 +147,22 @@ class FakeTrainerRepository implements TrainerRepository {
   Future<void> connect(String deviceId) async {
     savedDeviceId = deviceId;
     connectCalls += 1;
+    callLog.add('trainer_connect:$deviceId');
+    if (connectHandler != null) {
+      await connectHandler!(deviceId);
+      return;
+    }
     _connectionStatusController.add(ConnectionStatus.connected);
   }
 
   @override
   Future<void> disconnect() async {
     disconnectCalls += 1;
+    callLog.add('trainer_disconnect');
+    if (disconnectHandler != null) {
+      await disconnectHandler!();
+      return;
+    }
     _connectionStatusController.add(ConnectionStatus.disconnected);
   }
 
@@ -139,6 +172,11 @@ class FakeTrainerRepository implements TrainerRepository {
   @override
   Future<void> reconnect() async {
     reconnectCalls += 1;
+    callLog.add('trainer_reconnect');
+    if (reconnectHandler != null) {
+      await reconnectHandler!();
+      return;
+    }
     _connectionStatusController.add(ConnectionStatus.connected);
   }
 
